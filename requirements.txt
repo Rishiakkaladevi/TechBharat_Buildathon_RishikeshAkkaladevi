@@ -1,0 +1,27 @@
+# === Agent Orchestration ===
+langgraph>=0.2.0
+langgraph-checkpoint-sqlite>=1.0.0
+
+# === LLM — Groq ===
+groq>=0.9.0
+langchain-groq>=0.1.0
+
+# === Transcription & Diarization — Deepgram ===
+deepgram-sdk>=3.4.0
+
+# === Streamlit UI ===
+streamlit>=1.35.0
+
+# === GitHub Integration ===
+PyGithub>=2.3.0
+
+# === NLP / Extraction ===
+rapidfuzz>=3.9.0
+dateparser>=1.2.0
+
+# === Utilities ===
+python-dotenv>=1.0.0
+pydantic>=2.7.0
+tiktoken>=0.7.0
+rich>=13.7.0
+pandas>=2.2.0

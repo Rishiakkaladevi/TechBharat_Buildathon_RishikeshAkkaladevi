@@ -1,0 +1,55 @@
+# ── Virtual environment ───────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── API keys & secrets — NEVER commit these ───────────────────
+.env
+*.env
+!.env.example
+
+# ── Runtime data ──────────────────────────────────────────────
+data/
+*.db
+*.jsonl
+*.sqlite
+*.sqlite3
+
+# ── Python cache ──────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ── Streamlit ─────────────────────────────────────────────────
+.streamlit/
+
+# ── Jupyter ───────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Testing / temp ────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+*.tmp
+
+# ── OS junk ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
