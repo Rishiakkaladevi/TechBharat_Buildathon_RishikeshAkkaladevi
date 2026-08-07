@@ -20,7 +20,7 @@ import tiktoken
 
 from core.models import (
     MeetingRecordRaw, ActionItemRaw, Decision,
-    Priority, Utterance
+    Priority, Utterance, OpenQuestion
 )
 
 
@@ -79,7 +79,12 @@ Return a JSON object with exactly this structure:
       "timestamp": "HH:MM:SS or null"
     }}
   ],
-  "open_questions": ["question 1", "question 2"],
+  "open_questions": [
+    {{
+      "question": "what is the question?",
+      "asked_by": "who asked it, or null"
+    }}
+  ],
   "risks": ["risk or blocker 1", "risk or blocker 2"],
   "action_items": [
     {{
@@ -209,10 +214,19 @@ def _merge_chunk_results(chunk_results: list[dict]) -> dict:
     # Use summary from first chunk (consolidation pass would be ideal but adds latency)
     summary = chunk_results[0].get("summary", "") if chunk_results else ""
 
+    # Dedup open questions by question text
+    unique_questions = []
+    seen_q = set()
+    for q in merged_open_questions:
+        q_text = q.get("question", "") if isinstance(q, dict) else str(q)
+        if q_text and q_text not in seen_q:
+            unique_questions.append(q)
+            seen_q.add(q_text)
+
     return {
         "summary":        summary,
         "decisions":      merged_decisions,
-        "open_questions": list(set(merged_open_questions)),
+        "open_questions": unique_questions,
         "risks":          list(set(merged_risks)),
         "action_items":   merged_action_items,
     }
@@ -261,7 +275,13 @@ def _validate_and_build(raw: dict, meeting_id: str, meeting_date: str) -> Meetin
         meeting_date   = meeting_date,
         summary        = raw.get("summary", ""),
         decisions      = decisions,
-        open_questions = raw.get("open_questions", []),
+        open_questions = [
+            OpenQuestion(
+                question = q.get("question", "") if isinstance(q, dict) else str(q),
+                asked_by = q.get("asked_by") if isinstance(q, dict) else None
+            )
+            for q in raw.get("open_questions", [])
+        ],
         risks          = raw.get("risks", []),
         action_items   = action_items,
     )

@@ -54,6 +54,11 @@ class Decision(BaseModel):
     timestamp: Optional[str] = None          # "00:08:41"
 
 
+class OpenQuestion(BaseModel):
+    question: str
+    asked_by: Optional[str] = None
+
+
 class ActionItemRaw(BaseModel):
     """Action item as extracted by the LLM — owners/dates still raw strings."""
     id:                 str                  # "ai_001"
@@ -72,9 +77,9 @@ class MeetingRecordRaw(BaseModel):
     meeting_id:     str                      # sha256 of transcript content
     meeting_date:   str                      # "2026-08-06"
     summary:        str
-    decisions:      list[Decision]   = []
-    open_questions: list[str]        = []
-    risks:          list[str]        = []
+    decisions:      list[Decision]     = []
+    open_questions: list[OpenQuestion] = []
+    risks:          list[str]          = []
     action_items:   list[ActionItemRaw] = []
 
 

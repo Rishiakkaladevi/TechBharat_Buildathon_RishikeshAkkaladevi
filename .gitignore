@@ -30,7 +30,7 @@ build/
 .eggs/
 
 # ── Streamlit ─────────────────────────────────────────────────
-.streamlit/
+# .streamlit/ is intentionally NOT ignored so config.toml (theme) ships with the repo
 
 # ── Jupyter ───────────────────────────────────────────────────
 .ipynb_checkpoints/

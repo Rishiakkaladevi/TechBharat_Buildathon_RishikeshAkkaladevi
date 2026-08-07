@@ -35,7 +35,331 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── Global CSS removed per user request ─────────────────────────
+# ── Global CSS (Space Grotesk + Warm Parchment Theme) ──────────
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+/* ── Base font ── */
+html, body, .stApp, [class*="css"] {
+    font-family: 'Space Grotesk', sans-serif !important;
+}
+code, pre, .stCode, [data-testid="stCode"] * {
+    font-family: 'Space Mono', monospace !important;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/* ── App background ── */
+.stApp {
+    background-color: #f0ece3 !important;
+    color: #1a1008 !important;
+    min-height: 100vh;
+}
+
+/* Hide Streamlit chrome */
+#MainMenu, footer, header { visibility: hidden !important; }
+[data-testid="collapsedControl"], .stDeployButton,
+[data-testid="stToolbar"], section[data-testid="stSidebar"] { display: none !important; }
+.block-container { padding: 2rem 2.5rem !important; max-width: 1200px !important; margin: 0 auto; }
+
+/* ── Cards (bordered containers) ── */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: #faf8f4 !important;
+    border: 1px solid #d6cfc4 !important;
+    border-radius: 12px !important;
+    padding: 20px 22px !important;
+    transition: border-color 0.2s, box-shadow 0.2s !important;
+    box-shadow: 0 2px 8px rgba(26,16,8,0.04) !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+    border-color: #c1440e !important;
+    box-shadow: 0 4px 16px rgba(193,68,14,0.08) !important;
+}
+
+/* ── Primary buttons ── */
+.stButton > button[kind="primary"] {
+    background: #c1440e !important;
+    border: none !important;
+    border-radius: 8px !important;
+    padding: 10px 24px !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-size: 0.9em !important;
+    font-weight: 600 !important;
+    color: #fff !important;
+    letter-spacing: 0.01em !important;
+    box-shadow: 0 2px 10px rgba(193,68,14,0.25) !important;
+    transition: all 0.18s !important;
+    width: 100% !important;
+}
+.stButton > button[kind="primary"]:hover {
+    background: #a83a0c !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 18px rgba(193,68,14,0.35) !important;
+}
+
+/* ── Secondary buttons ── */
+.stButton > button[kind="secondary"] {
+    background: #faf8f4 !important;
+    border: 1px solid #d6cfc4 !important;
+    border-radius: 8px !important;
+    color: #4a3728 !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-weight: 500 !important;
+    transition: all 0.18s !important;
+}
+.stButton > button[kind="secondary"]:hover {
+    background: #fff !important;
+    border-color: #c1440e !important;
+    color: #c1440e !important;
+}
+
+/* ── Input wrappers — strip Streamlit default borders ── */
+div[data-baseweb="input"],
+div[data-baseweb="base-input"],
+div[data-baseweb="select"] > div,
+[data-testid="stTextInputRootElement"],
+[data-testid="stTextInputRootElement"] > div,
+[data-testid="stTextInputRootElement"] > div > div,
+[data-testid="stTextInput"] > div > div {
+    border: none !important;
+    border-color: transparent !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+}
+
+/* ── Inputs & textareas ── */
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea,
+[data-testid="stSelectbox"] > div > div,
+[data-testid="stDateInput"] input {
+    background: #fff !important;
+    border: 1px solid #d6cfc4 !important;
+    border-radius: 8px !important;
+    color: #1a1008 !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-size: 0.9em !important;
+}
+[data-testid="stTextInput"] input:focus,
+[data-testid="stTextArea"] textarea:focus,
+[data-testid="stSelectbox"] > div > div:focus,
+[data-testid="stDateInput"] input:focus {
+    border-color: #c1440e !important;
+    box-shadow: 0 0 0 3px rgba(193,68,14,0.12) !important;
+    outline: none !important;
+}
+
+/* ── File uploader ── */
+[data-testid="stFileUploader"] {
+    border: 2px dashed #c1440e !important;
+    border-radius: 10px !important;
+    background: rgba(193,68,14,0.02) !important;
+    transition: all 0.2s !important;
+}
+[data-testid="stFileUploader"]:hover {
+    background: rgba(193,68,14,0.05) !important;
+}
+
+/* ── Metrics ── */
+[data-testid="stMetric"] {
+    background: #faf8f4 !important;
+    border: 1px solid #d6cfc4 !important;
+    border-radius: 10px !important;
+    padding: 14px !important;
+}
+[data-testid="stMetricValue"] { color: #c1440e !important; font-weight: 700 !important; font-family: 'Space Grotesk', sans-serif !important; }
+[data-testid="stMetricLabel"] { color: #7a6254 !important; font-size: 0.82em !important; }
+
+/* ── Progress bar ── */
+[data-testid="stProgressBar"] > div > div {
+    background: #c1440e !important;
+    border-radius: 4px !important;
+}
+
+/* ── Expander ── */
+[data-testid="stExpander"] details {
+    border: 1px solid #d6cfc4 !important;
+    border-radius: 10px !important;
+    background: #faf8f4 !important;
+}
+[data-testid="stExpander"] summary {
+    background: transparent !important;
+    border-radius: 10px !important;
+    border: none !important;
+    color: #4a3728 !important;
+    font-weight: 600 !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+}
+
+/* ── Badges ── */
+.badge {
+    display: inline-block; padding: 2px 9px; border-radius: 6px;
+    font-size: 0.7em; font-weight: 700; letter-spacing: 0.05em;
+    font-family: 'Space Mono', monospace;
+}
+.badge-high    { background: rgba(220,38,38,0.1);   color: #dc2626; }
+.badge-medium  { background: rgba(193,68,14,0.12);  color: #c1440e; }
+.badge-low     { background: rgba(22,163,74,0.1);   color: #16a34a; }
+.badge-pending { background: rgba(193,68,14,0.1);   color: #c1440e; }
+.badge-approved{ background: rgba(22,163,74,0.1);   color: #16a34a; }
+.badge-rejected{ background: rgba(220,38,38,0.1);   color: #dc2626; }
+.badge-flagged { background: rgba(202,138,4,0.1);   color: #ca8a04; }
+
+/* ── Stepper ── */
+.step-row { display: flex; align-items: flex-start; gap: 14px; padding-bottom: 18px; position: relative; }
+.step-row:not(:last-child)::after {
+    content: ''; position: absolute; left: 15px; top: 34px;
+    width: 2px; height: calc(100% - 14px);
+    background: #d6cfc4;
+}
+.step-dot {
+    width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.75em; font-weight: 700; z-index: 1; margin-top: 2px;
+    font-family: 'Space Mono', monospace;
+}
+.step-dot.done   { background: #16a34a; color: #fff; }
+.step-dot.active { background: #c1440e; color: #fff; animation: pulse-dot 2s infinite; }
+.step-dot.wait   { background: #faf8f4; color: #a08070; border: 1px solid #d6cfc4; }
+@keyframes pulse-dot { 0%,100%{box-shadow:0 0 0 0 rgba(193,68,14,0.3)} 50%{box-shadow:0 0 0 6px rgba(193,68,14,0)} }
+.step-name { font-size: 0.88em; font-weight: 600; color: #1a1008; padding-top: 4px; }
+.step-desc { font-size: 0.76em; color: #7a6254; margin-top: 2px; }
+
+/* ── Confidence bar ── */
+.conf-bar { background: #e8e4db; border-radius: 4px; height: 4px; overflow: hidden; margin: 8px 0 4px; }
+.conf-fill { height: 4px; border-radius: 4px; background: #c1440e; }
+
+/* ── Divider ── */
+hr { border-color: #d6cfc4 !important; margin: 28px 0 !important; }
+
+/* ── Dataframe ── */
+[data-testid="stDataFrame"] { border-radius: 10px !important; overflow: hidden !important; border: 1px solid #d6cfc4 !important; }
+
+/* ── Headings ── */
+h1, h2, h3, h4 { color: #1a1008 !important; font-weight: 700 !important; font-family: 'Space Grotesk', sans-serif !important; }
+
+/* ── Download button ── */
+[data-testid="stDownloadButton"] button {
+    background: #faf8f4 !important;
+    border: 1px solid #d6cfc4 !important;
+    border-radius: 8px !important;
+    color: #4a3728 !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-weight: 600 !important;
+    transition: all 0.18s !important;
+}
+[data-testid="stDownloadButton"] button:hover {
+    border-color: #c1440e !important;
+    color: #c1440e !important;
+}
+
+/* ── Action Item Cards ── */
+.ac-card {
+    background: #faf8f4;
+    border: 1px solid #d6cfc4;
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 4px;
+    transition: box-shadow 0.2s, border-color 0.2s;
+}
+.ac-card:hover {
+    border-color: #c1440e;
+    box-shadow: 0 6px 20px rgba(26,16,8,0.08);
+}
+.ac-header {
+    display: flex;
+    align-items: stretch;
+    border-bottom: 1px solid #e8e4db;
+}
+.ac-header-body {
+    flex: 1;
+    padding: 14px 18px;
+}
+.ac-title {
+    font-size: 1em;
+    font-weight: 700;
+    color: #1a1008;
+    line-height: 1.3;
+    margin-bottom: 8px;
+    font-family: 'Space Grotesk', sans-serif;
+}
+.ac-meta {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.ac-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.78em;
+    font-weight: 500;
+    color: #7a6254;
+    background: #edeae4;
+    border-radius: 20px;
+    padding: 3px 10px;
+    font-family: 'Space Grotesk', sans-serif;
+}
+.ac-badges {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 14px 16px;
+    flex-shrink: 0;
+}
+.ac-body {
+    padding: 14px 18px 10px 23px;
+}
+.ac-desc {
+    font-size: 0.88em;
+    color: #3d2c20;
+    line-height: 1.65;
+    padding: 10px 14px;
+    background: rgba(193,68,14,0.04);
+    border-radius: 6px;
+    border-left: 3px solid rgba(193,68,14,0.3);
+    margin-bottom: 12px;
+}
+.ac-conf-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+.ac-conf-track {
+    flex: 1;
+    height: 4px;
+    background: #e8e4db;
+    border-radius: 4px;
+    overflow: hidden;
+}
+.ac-conf-fill {
+    height: 4px;
+    border-radius: 4px;
+    background: #c1440e;
+}
+.ac-conf-label {
+    font-size: 0.72em;
+    color: #a08070;
+    font-family: 'Space Mono', monospace;
+    flex-shrink: 0;
+}
+.ac-controls-label {
+    font-size: 0.65em;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #a08070;
+    margin-bottom: 4px;
+    font-family: 'Space Grotesk', sans-serif;
+    padding: 8px 0 2px 0;
+    border-top: 1px solid #e8e4db;
+}
+</style>
+""", unsafe_allow_html=True)
 
 
 # ── Session state ────────────────────────────────────────────────
@@ -77,12 +401,19 @@ def _stepper_html(active: int) -> str:
         ("Review",   "Human gate"),
         ("Execute",  "GitHub Issues"),
     ]
-    md = []
+    rows = ""
     for i, (name, desc) in enumerate(steps):
-        if i < active:    md.append(f"✅ ~~**{name}**: {desc}~~")
-        elif i == active: md.append(f"▶️ **{name}**: {desc}")
-        else:             md.append(f"⏳ {name}: {desc}")
-    return "\n\n".join(md)
+        if i < active:    cls, icon = "done",   ""
+        elif i == active: cls, icon = "active", str(i+1)
+        else:             cls, icon = "wait",   str(i+1)
+        rows += (
+            f'<div class="step-row">'
+            f'  <div class="step-dot {cls}">{icon}</div>'
+            f'  <div><div class="step-name">{name}</div>'
+            f'      <div class="step-desc">{desc}</div></div>'
+            f'</div>'
+        )
+    return rows
 
 def _build_markdown_report(meeting_record: dict, action_items: list, result: dict | None) -> str:
     mr      = meeting_record or {}
@@ -118,7 +449,13 @@ def _build_markdown_report(meeting_record: dict, action_items: list, result: dic
     if questions:
         lines += ["\n##Open Questions\n"]
         for q in questions:
-            lines.append(f"- ❓ {q}")
+            q_text = q.question if hasattr(q, "question") else (q.get("question", str(q)) if isinstance(q, dict) else str(q))
+            asked_by = q.asked_by if hasattr(q, "asked_by") else (q.get("asked_by") if isinstance(q, dict) else None)
+            
+            if asked_by:
+                lines.append(f"-  **{q_text}** *(asked by {asked_by})*")
+            else:
+                lines.append(f"-  {q_text}")
 
     if action_items:
         lines += ["\n##Action Items\n"]
@@ -155,86 +492,15 @@ def _build_markdown_report(meeting_record: dict, action_items: list, result: dic
 # ═══════════════════════════════════════════════════════════════
 
 def main():
-    st.title("MeetingMind")
-    # ── DEV BYPASS ─────────────────────────────────────────────────
-    with st.expander("🧪 Load demo data (dev bypass)", expanded=False):
-        if st.button("Inject dummy meeting output", key="demo_bypass"):
-            from datetime import timedelta
-            today = __import__("datetime").date.today()
-            st.session_state["graph_state"] = {
-                "record": {
-                    "summary": (
-                        "The Q3 planning sync covered finalizing the API spec for the payment "
-                        "gateway, database migration status, and security audit scheduling. "
-                        "Alice will own the API spec and have a draft ready by next Friday. "
-                        "Priya will follow up with Rahul from infra to unblock the database "
-                        "migration. Bob will book the security audit before end of quarter."
-                    ),
-                    "decisions": [
-                        {"decision": "Alice owns the API spec", "context": "to unblock the mobile team"},
-                        {"decision": "Drop the old authentication system", "context": "as decided in the last meeting"},
-                        {"decision": "Security audit booked for Sept 20", "context": "Bob to confirm vendor"},
-                    ],
-                    "risks": [
-                        "Infra issue may cause database migration to slip past the sprint deadline if not resolved by Wednesday",
-                        "No fallback plan if the payment gateway vendor delays the API docs",
-                    ],
-                    "open_questions": [
-                        "Do we need legal sign-off before launching the new payment flow?",
-                        "Who owns the deprecation notice for the old auth system?",
-                    ],
-                },
-                "action_items": [
-                    {
-                        "title": "Draft API spec v1",
-                        "description": "Cover all payment gateway endpoints including auth, webhooks, and error codes.",
-                        "raw_owner": "Alice", "resolved_owner": {"name": "Alice", "email": "", "github_username": None},
-                        "raw_due_date": str(today + timedelta(days=7)), "resolved_date": str(today + timedelta(days=7)),
-                        "priority": "high", "status": "pending", "confidence": 0.92,
-                        "evidence_quote": "Alice, can you have the API spec ready by next Friday?",
-                        "evidence_timestamp": "00:04:12",
-                    },
-                    {
-                        "title": "Follow up with Rahul on DB migration blockers",
-                        "description": "Check if the infra ticket has been picked up and get an ETA.",
-                        "raw_owner": "Priya", "resolved_owner": {"name": "Priya", "email": "", "github_username": None},
-                        "raw_due_date": str(today + timedelta(days=2)), "resolved_date": str(today + timedelta(days=2)),
-                        "priority": "high", "status": "pending", "confidence": 0.88,
-                        "evidence_quote": "Priya, please loop in Rahul and get us an update by Wednesday.",
-                        "evidence_timestamp": "00:11:45",
-                    },
-                    {
-                        "title": "Book security audit vendor",
-                        "description": "Confirm the Sept 20 slot with the vendor and send calendar invites.",
-                        "raw_owner": "Bob", "resolved_owner": {"name": "Bob", "email": "", "github_username": None},
-                        "raw_due_date": str(today + timedelta(days=14)), "resolved_date": str(today + timedelta(days=14)),
-                        "priority": "medium", "status": "pending", "confidence": 0.81,
-                        "evidence_quote": "Bob will handle scheduling the security audit.",
-                        "evidence_timestamp": "00:18:33",
-                    },
-                    {
-                        "title": "Write deprecation notice for old auth system",
-                        "description": "Notify internal teams and external partners via email and docs.",
-                        "raw_owner": "Alice", "resolved_owner": {"name": "Alice", "email": "", "github_username": None},
-                        "raw_due_date": str(today + timedelta(days=21)), "resolved_date": str(today + timedelta(days=21)),
-                        "priority": "low", "status": "approved", "confidence": 0.76,
-                        "evidence_quote": "The deprecation notice should go out before end of month.",
-                        "evidence_timestamp": "00:22:10",
-                    },
-                ],
-                "participant_roster": [
-                    {"name": "Alice", "email": "alice@example.com", "github_username": "alice-dev", "aliases": ["Alice"]},
-                    {"name": "Priya", "email": "priya@example.com", "github_username": "priya-eng", "aliases": ["Priya"]},
-                    {"name": "Bob",   "email": "bob@example.com",   "github_username": "bob-ops",  "aliases": ["Bob"]},
-                ],
-            }
-            st.session_state["action_items"] = st.session_state["graph_state"]["action_items"]
-            st.session_state["meeting_record"] = st.session_state["graph_state"]["record"]
-            st.session_state["pipeline_step"] = 3  # Review stage
-            st.success("✅ Demo data loaded — scroll down to see the full UI!")
-            st.rerun()
-
+    st.markdown(
+        '<div style="text-align:center;margin-bottom:20px">'
+        '<span style="font-size:2.4em;font-weight:900;letter-spacing:-0.03em;background:linear-gradient(135deg,#c1440e,#d4602a);'
+        '-webkit-background-clip:text;-webkit-text-fill-color:transparent">MeetingMind</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
     # ── SECTION 1: Upload & Config ──
+
     left, right = st.columns([3, 2], gap="large")
 
     with left:
@@ -385,9 +651,11 @@ def main():
     _should_process = st.session_state.get("process_btn") and active_file
 
     if _should_process:
-        # Build a minimal roster from discovered speakers if available,
-        # otherwise start with empty — speakers get mapped in review
-        roster = st.session_state.get("participant_roster_final", [])
+        # Clear old session state to prevent previous meeting data from bleeding over
+        for key in ["participant_roster_final", "action_items", "meeting_record", "graph_state", "warnings"]:
+            st.session_state.pop(key, None)
+            
+        roster = []
         suffix = Path(active_file.name).suffix
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             active_file.seek(0)
@@ -483,18 +751,20 @@ def main():
         rejected = [i for i in edited_items if i.get("status") == "rejected"]
         pending  = len(ai) - len(approved) - len(rejected)
 
-        st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
-        with st.container(border=True):
-            scol, bcol = st.columns([3, 1])
-            with scol:
-                st.markdown(
-                    f'<div style="display:flex;gap:24px;align-items:center;padding:10px 0">'
-                    f'  <span style="font-size:1.1em;color:#16a34a;font-weight:700"> {len(approved)} approved</span>'
-                    f'  <span style="font-size:1.1em;color:#ef4444;font-weight:700"> {len(rejected)} rejected</span>'
-                    f'  <span style="font-size:1.1em;color:#7a6254;font-weight:600">· {pending} pending</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+        st.markdown(
+            "<hr style='margin:30px 0; border:none; border-top:1px solid #e8e4db'>", 
+            unsafe_allow_html=True
+        )
+        scol, bcol = st.columns([3, 1])
+        with scol:
+            st.markdown(
+                f'<div style="display:flex;gap:28px;align-items:center;height:100%;padding-top:4px">'
+                f'  <div style="font-size:0.9em;font-weight:800;color:#1a6b55;letter-spacing:0.05em;text-transform:uppercase"><span style="font-size:1.3em">{len(approved)}</span> Approved</div>'
+                f'  <div style="font-size:0.9em;font-weight:800;color:#c1440e;letter-spacing:0.05em;text-transform:uppercase"><span style="font-size:1.3em">{len(rejected)}</span> Rejected</div>'
+                f'  <div style="font-size:0.9em;font-weight:700;color:#a05c00;letter-spacing:0.05em;text-transform:uppercase"><span style="font-size:1.3em">{pending}</span> Pending</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
             with bcol:
                 if st.button(
                     "Confirm & Execute",
@@ -582,10 +852,11 @@ def _render_participant_mapper():
         for speaker in speakers:
             col_label, col_select = st.columns([2, 3])
             with col_label:
-                st.markdown(
-                    f'<div style="padding:8px 0;font-size:0.9em;font-weight:700;color:#1a1008;">'
-                    f'🎙️ {speaker}</div>',
-                    unsafe_allow_html=True,
+                edited_speaker_name = st.text_input(
+                    f"Name for {speaker}",
+                    value=speaker,
+                    key=f"edit_speaker_{speaker}",
+                    label_visibility="collapsed"
                 )
             with col_select:
                 default_idx = _best_match(speaker) if collabs else 0
@@ -598,19 +869,20 @@ def _render_participant_mapper():
                 )
 
             # Build roster entry from selection
+            # We must keep the original `speaker` in aliases so LLM extracted raw_owners still map correctly
             if chosen == "(Not a collaborator)":
                 roster.append({
-                    "name":            speaker,
+                    "name":            edited_speaker_name,
                     "email":           "",
                     "github_username": None,
-                    "aliases":         [speaker.split()[0]] if speaker else [],
+                    "aliases":         [speaker, edited_speaker_name.split()[0]] if speaker else [],
                 })
             else:
                 roster.append({
-                    "name":            collab_name_map.get(chosen, speaker),
+                    "name":            collab_name_map.get(chosen, edited_speaker_name),
                     "email":           "",
                     "github_username": collab_login_map.get(chosen),
-                    "aliases":         [speaker, speaker.split()[0]] if speaker else [],
+                    "aliases":         [speaker, edited_speaker_name, speaker.split()[0]] if speaker else [],
                 })
 
         # Persist the final mapped roster to session state so the pipeline and execute step can use it
@@ -659,57 +931,20 @@ def _render_summary(record: dict, action_items: list):
     risks     = record.get("risks", [])
     questions = record.get("open_questions", [])
 
-    st.subheader("Meeting Summary")
-    if summary:
-        st.write(summary)
+    with st.container(border=True):
+        st.markdown(
+            '<span style="font-size:0.7em;font-weight:800;letter-spacing:0.12em;'
+            'text-transform:uppercase;color:#c1440e">Meeting Summary</span>',
+            unsafe_allow_html=True,
+        )
+        if summary:
+            st.markdown(
+                f'<p style="color:#3d2c20;font-size:0.95em;line-height:1.75;margin-top:10px">{summary}</p>',
+                unsafe_allow_html=True,
+            )
 
     if decisions or risks or questions:
-        d_col, r_col = st.columns(2)
-        with d_col:
-            if decisions:
-                st.subheader("Key Decisions")
-                for d in decisions:
-                    text = d.get("decision", str(d)) if isinstance(d, dict) else str(d)
-                    ctx  = d.get("context", "") if isinstance(d, dict) else ""
-                    st.markdown(f"- **{text}**")
-                    if ctx:
-                        st.caption(ctx)
-
-            if risks:
-                st.subheader("Risks & Blockers")
-                for r in risks:
-                    st.warning(f"⚠️ {r}")
-
-            if questions:
-                st.subheader("Open Questions")
-                for q in questions:
-                    st.info(f"❓ {q}")
-
-        with r_col:
-            if action_items:
-                st.subheader("Deadlines Timeline")
-                events = []
-                for item in action_items:
-                    due = item.get("resolved_date") or item.get("raw_due_date")
-                    if due:
-                        try:
-                            # Using __import__ to avoid scope issues in re.sub
-                            d_obj = __import__("datetime").date.fromisoformat(str(due).split("T")[0].split(" ")[0])
-                            events.append({
-                                "title": item.get("title", "Action Item"),
-                                "date":  d_obj,
-                                "owner": (item.get("resolved_owner") or {}).get("name") or item.get("raw_owner", "—"),
-                                "prio":  _norm(item.get("priority","medium"),"medium").lower(),
-                            })
-                        except:
-                            pass
-                
-                if not events:
-                    st.caption("No action items with dates to display.")
-                else:
-                    events.sort(key=lambda x: x["date"])
-                    for ev in events:
-                        st.markdown(f"**{ev['date'].strftime('%b %d')}** - {ev['title']} (👤 {ev['owner']})")
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
         d_col, r_col = st.columns(2)
         with d_col:
             if decisions:
@@ -759,10 +994,14 @@ def _render_summary(record: dict, action_items: list):
     <div class="ac-header-body" style="padding-bottom:0">
       <div style="font-size:0.65em;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#7c5070;margin-bottom:10px">Open Questions</div>"""
                 for q in questions:
+                    q_text = q.question if hasattr(q, "question") else (q.get("question", str(q)) if isinstance(q, dict) else str(q))
+                    asked_by = q.asked_by if hasattr(q, "asked_by") else (q.get("asked_by") if isinstance(q, dict) else None)
+                    asked_html = f'<span style="color:#7c5070;font-weight:700;font-size:0.85em;margin-left:6px;background:#f4eef2;padding:2px 6px;border-radius:4px">{asked_by}</span>' if asked_by else ""
+                    
                     q_html += f"""
       <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid #e8e4db;">
         <div style="width:8px;height:8px;border-radius:50%;background:none;border:2px solid #7c5070;flex-shrink:0;margin-top:5px"></div>
-        <div style="font-size:0.88em;font-weight:600;color:#1a1008;line-height:1.4">❓ {q}</div>
+        <div style="font-size:0.88em;font-weight:600;color:#1a1008;line-height:1.4">❓ {q_text}{asked_html}</div>
       </div>"""
                 q_html += "\n    </div>\n  </div>\n</div>"
                 st.markdown(q_html, unsafe_allow_html=True)
@@ -815,18 +1054,18 @@ def _render_summary(record: dict, action_items: list):
     background: #faf8f4;
     border: 1px solid #d6cfc4;
     border-radius: 12px;
-    padding: 12px 14px;
+    padding: 16px 20px;
     margin: 8px auto 0;
     font-family: 'Space Grotesk', sans-serif;
-    max-width: 420px;
+    max-width: 380px;
     width: 100%;
 }}
 .cal-header {{
     text-align: center;
-    margin-bottom: 8px;
+    margin-bottom: 12px;
 }}
 .cal-month {{
-    font-size: 0.82em;
+    font-size: 0.95em;
     font-weight: 700;
     color: #1a1008;
     letter-spacing: 0.06em;
@@ -835,21 +1074,22 @@ def _render_summary(record: dict, action_items: list):
 .cal-grid {{
     display: grid;
     grid-template-columns: repeat(7, 1fr);
-    gap: 2px;
+    gap: 4px;
     text-align: center;
 }}
 .cal-dow {{
-    font-size: 0.65em;
+    font-size: 0.75em;
     font-weight: 600;
     color: #a08070;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    padding-bottom: 4px;
+    padding-bottom: 6px;
 }}
 .cal-day {{
     position: relative;
     aspect-ratio: 1;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     border-radius: 6px;
@@ -859,24 +1099,20 @@ def _render_summary(record: dict, action_items: list):
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
-    font-size: 0.78em;
+    font-size: 0.88em;
     font-weight: 500;
     color: #a08070;
 }}
 .cal-day.has-events .cal-day-num {{
     font-weight: 800;
     color: #1a1008;
-    border: 2px solid #d6cfc4;
     cursor: pointer;
-    transition: border-color 0.15s, box-shadow 0.15s;
 }}
-.cal-day.has-events:hover .cal-day-num {{
-    border-color: var(--ring-color, #c1440e);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring-color, #c1440e) 15%, transparent);
-    color: var(--ring-color, #c1440e);
+.cal-day.has-events:hover {{
+    background: rgba(193, 68, 14, 0.08);
 }}
 .cal-day.is-today .cal-day-num {{
     background: #c1440e;
@@ -884,6 +1120,19 @@ def _render_summary(record: dict, action_items: list):
     font-weight: 800;
     border: none;
     box-shadow: 0 2px 6px rgba(193,68,14,0.3);
+}}
+.cal-dots {{
+    display: flex;
+    gap: 4px;
+    margin-top: 3px;
+    justify-content: center;
+    height: 8px;
+}}
+.cal-dot {{
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
 }}
 /* Hover tooltip */
 .cal-tooltip {{
@@ -948,22 +1197,21 @@ def _render_summary(record: dict, action_items: list):
                             has_ev     = len(day_events) > 0
                             is_today   = (current_d == today)
 
-                            # Pick highest priority ring color for this date
-                            if has_ev:
-                                top_ev    = min(day_events, key=lambda e: PRIO_RANK.get(e.get("prio","medium"), 1))
-                                ring_clr  = PRIO_DOT.get(top_ev.get("prio","medium"), "#a05c00")
-                            else:
-                                ring_clr  = "#c1440e"
-
                             classes = "cal-day"
                             if is_today:  classes += " is-today"
-                            elif has_ev:  classes += " has-events"
+                            if has_ev:  classes += " has-events"
 
-                            style = f'style="--ring-color:{ring_clr}"' if has_ev else ""
-                            cal_html += f'<div class="{classes}" {style}>\n'
+                            cal_html += f'<div class="{classes}">\n'
                             cal_html += f'  <div class="cal-day-num">{day}</div>\n'
 
                             if has_ev:
+                                # Dots below date
+                                cal_html += '  <div class="cal-dots">\n'
+                                for ev in day_events[:3]: # Max 3 dots so it fits
+                                    dot_color = PRIO_DOT.get(ev.get("prio", "medium"), "#a05c00")
+                                    cal_html += f'    <div class="cal-dot" style="background:{dot_color}"></div>\n'
+                                cal_html += '  </div>\n'
+
                                 # Tooltip
                                 tooltip_lines = ""
                                 for ev in day_events:
@@ -989,7 +1237,16 @@ def _render_items(action_items: list) -> list:
     roster = (st.session_state.get("graph_state") or {}).get("participant_roster", [])
     owners = [p.get("name", "") for p in roster] if roster else []
 
-    st.subheader(f"Action Items ({len(action_items)})")
+    PRIO_COLOR = {"high": "#c1440e", "medium": "#a05c00", "low": "#1a6b55"}
+    STATUS_ICON = {"approved": "✅", "rejected": "❌", "pending": "⏳"}
+
+    st.markdown(
+        f'<div style="font-size:0.78em;font-weight:700;letter-spacing:0.12em;'
+        f'text-transform:uppercase;color:#c1440e;margin-bottom:14px">'
+        f'Action Items &nbsp;<span style="background:#c1440e;color:#fff;border-radius:20px;'
+        f'padding:2px 9px;font-size:0.95em">{len(action_items)}</span></div>',
+        unsafe_allow_html=True,
+    )
 
     edited = []
     for i, item in enumerate(action_items):
@@ -1003,19 +1260,47 @@ def _render_items(action_items: list) -> list:
         description = item.get("description", "")
         evidence    = item.get("evidence_quote", "")
         ev_ts       = item.get("evidence_timestamp", "")
+        prio_color  = PRIO_COLOR.get(raw_prio, "#a05c00")
+        status_icon = STATUS_ICON.get(status_val, "⏳")
         title       = item.get("title", "Untitled")
 
-        with st.container(border=True):
-            st.markdown(f"### {title}")
-            st.caption(f"👤 {owner_name} | 📅 {date_disp} | 🎯 Priority: {raw_prio.upper()} | 📌 Status: {status_val.upper()}")
-            
-            if description:
-                st.write(description)
-                
-            st.progress(conf, text=f"{int(conf*100)}% confidence")
+        # ── Card header (full custom HTML) ──────────────────────
+        header_html = f"""
+<div class="ac-card">
+  <div class="ac-header">
+    <div class="ac-header-body">
+      <div class="ac-title">{title}</div>
+      <div class="ac-meta">
+        <span class="ac-chip">👤 {owner_name}</span>
+        <span class="ac-chip">📅 {date_disp}</span>
+      </div>
+    </div>
+    <div class="ac-badges">
+      <span class="badge badge-{raw_prio}">{raw_prio.upper()}</span>
+      <span class="badge badge-{status_val}">{status_icon} {status_val.upper()}</span>
+    </div>
+  </div>
+  <div class="ac-body">"""
+
+        if description:
+            header_html += f"""
+    <div class="ac-desc">{description}</div>"""
+
+        header_html += f"""
+    <div class="ac-conf-row">
+      <div class="ac-conf-track"><div class="ac-conf-fill" style="width:{int(conf*100)}%"></div></div>
+      <span class="ac-conf-label">{int(conf*100)}% confidence</span>
+    </div>"""
+
+        header_html += """
+    <div class="ac-controls-label">Edit</div>
+  </div>
+</div>"""
+
+        st.markdown(header_html, unsafe_allow_html=True)
 
         # ── Native edit controls (must be Streamlit widgets) ─────
-        c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
+        c1, c2, c3, c4 = st.columns([1.8, 1.8, 1, 1.6])
         with c1:
             if owners:
                 idx = owners.index(owner_name) if owner_name in owners else 0
@@ -1040,11 +1325,30 @@ def _render_items(action_items: list) -> list:
                 key=f"prio_{i}", label_visibility="collapsed",
             )
         with c4:
-            sel_status = st.selectbox(
-                "Status", ["pending", "approved", "rejected"],
-                index=["pending", "approved", "rejected"].index(status_val),
-                key=f"status_{i}", label_visibility="collapsed",
-            )
+            bc1, bc2 = st.columns(2)
+            
+            def set_status(idx, new_status):
+                current = st.session_state["action_items"][idx].get("status", "pending")
+                st.session_state["action_items"][idx]["status"] = "pending" if current == new_status else new_status
+
+            with bc1:
+                st.button(
+                    "Approved" if status_val == "approved" else "Approve", 
+                    on_click=set_status, 
+                    args=(i, "approved"), 
+                    key=f"btn_app_{i}", 
+                    type="primary" if status_val == "approved" else "secondary",
+                    use_container_width=True
+                )
+            with bc2:
+                st.button(
+                    "Rejected" if status_val == "rejected" else "Reject", 
+                    on_click=set_status, 
+                    args=(i, "rejected"), 
+                    key=f"btn_rej_{i}",
+                    type="primary" if status_val == "rejected" else "secondary",
+                    use_container_width=True
+                )
 
         # Transcript evidence (collapsible)
         if evidence:
@@ -1057,7 +1361,7 @@ def _render_items(action_items: list) -> list:
 
         updated = dict(item)
         updated.update({
-            "status": sel_status, "priority": sel_prio,
+            "status": status_val, "priority": sel_prio,
             "resolved_date": sel_date.isoformat(),
         })
         if updated.get("resolved_owner"):

@@ -97,18 +97,23 @@ class GitHubConnector(BaseConnector):
         evidence = ""
         if item.evidence_quote:
             ts = f" (@ {item.evidence_timestamp})" if item.evidence_timestamp else ""
-            evidence = f"\n## 🗣️ Evidence\n> \"{item.evidence_quote}\"{ts}\n"
+            evidence = f"\n**🗣️ Evidence:**\n> \"{item.evidence_quote}\"{ts}\n"
 
-        desc = f"\n## 📝 Description\n{item.description}\n" if item.description else ""
+        desc = item.description if item.description else "No description provided."
+
+        import datetime
+        submission_date = datetime.date.today().strftime("%Y-%m-%d")
 
         return (
-            f"## Action Item\n{desc}\n"
-            f"| Field | Value |\n|---|---|\n"
-            f"| **Owner** | {owner_name} ({owner_email}) |\n"
-            f"| **Due Date** | {due_date} |\n"
-            f"| **Priority** | {priority_str.capitalize()} |\n"
-            f"| **Confidence** | {int(item.confidence * 100)}% |\n"
-            f"{evidence}\n---\n"
+            f"**Issue Name:** {item.title}\n"
+            f"**Assignee:** {owner_name} ({owner_email})\n"
+            f"**Submission Date:** {submission_date}\n"
+            f"**Due Date:** {due_date}\n"
+            f"**Priority:** {priority_str.capitalize()}\n"
+            f"**Confidence:** {int(item.confidence * 100)}%\n"
+            f"**Description:** {desc}\n"
+            f"{evidence}\n"
+            f"---\n"
             f"*🤖 Created by MeetingMind · Meeting: {meeting_date} · Item: `{item.id}`*"
         )
 
