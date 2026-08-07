@@ -1,0 +1,127 @@
+1
+00:00:02,000 --> 00:00:08,400
+Priya: Alright everyone, let's get started. We need to cover the Q3 roadmap, the infra migration, and the API rate limiting issue blocking the mobile team.
+
+2
+00:00:09,100 --> 00:00:14,600
+Marcus: Before we dive in — the staging environment went down again this morning. Eggomelette, did you get a chance to look at that?
+
+3
+00:00:15,200 --> 00:00:21,800
+Eggomelette: Yeah, it was a misconfigured nginx reverse proxy after the last deployment. I've pushed a fix but someone needs to verify it in prod before end of day.
+
+4
+00:00:22,300 --> 00:00:25,100
+Priya: Marcus, can you own the prod verification? Let's target 5 PM today.
+
+5
+00:00:25,700 --> 00:00:27,000
+Marcus: Sure, I'll handle it.
+
+6
+00:00:28,000 --> 00:00:34,600
+Priya: Good. On Q3 — the exec team has prioritised the payments module, the customer self-serve dashboard, and a performance audit on the checkout flow.
+
+7
+00:00:35,200 --> 00:00:42,300
+Lena: I've been working on the payments module spec. We need to decide between Stripe and Braintree. I sent a comparison doc but haven't heard back from the stakeholders.
+
+8
+00:00:42,900 --> 00:00:49,400
+Priya: Lena, can you set up a 30-minute call with the finance team by Thursday? We need to lock in the payment provider before sprint planning on Monday.
+
+9
+00:00:49,800 --> 00:00:51,800
+Lena: Got it. I'll send the calendar invite today.
+
+10
+00:00:52,400 --> 00:00:59,100
+Eggomelette: Worth flagging — if we go with Stripe, we'll need to rebuild the webhook infrastructure. Current setup can't handle Stripe's retry logic. I'd need about a week if Stripe is confirmed.
+
+11
+00:00:59,700 --> 00:01:02,400
+Priya: Can you have a design doc ready by Friday EOD so we can review before committing?
+
+12
+00:01:02,900 --> 00:01:04,500
+Eggomelette: Yes, I'll have it done by Friday.
+
+13
+00:01:05,200 --> 00:01:11,800
+Priya: On the self-serve dashboard — we've approved two contractors. Lena, you're the point of contact. Can you make sure they have Figma access, design system docs, and the API sandbox by Thursday?
+
+14
+00:01:12,400 --> 00:01:14,200
+Lena: Absolutely, I'll sort that by Thursday.
+
+15
+00:01:14,900 --> 00:01:21,600
+Eggomelette: The API sandbox is still running on mock data from February. Before the contractors hit it, someone needs to reseed it with realistic data or they'll build against broken assumptions.
+
+16
+00:01:22,100 --> 00:01:25,400
+Priya: Eggomelette, can you own the sandbox refresh? Contractors onboard Thursday, so Wednesday is the hard deadline.
+
+17
+00:01:25,900 --> 00:01:28,100
+Eggomelette: If I start tomorrow I can have it done by Wednesday. Not complex, just time-consuming.
+
+18
+00:01:28,800 --> 00:01:35,600
+Lena: On the performance audit — our last Lighthouse scores on the checkout flow were 54 on mobile. The biggest culprits are unoptimised images and a blocking analytics script.
+
+19
+00:01:36,200 --> 00:01:42,800
+Priya: Marcus, can you scope what we can fix on our side — image optimisation, lazy loading — and have a report by next Wednesday?
+
+20
+00:01:43,400 --> 00:01:46,200
+Marcus: Yes. I'll loop in Eggomelette on the server-side render times too since that's his area.
+
+21
+00:01:46,800 --> 00:01:51,100
+Eggomelette: SSR cold start times are spiking — I suspect it's the new middleware chain from the last release. I'll investigate and report back by Wednesday.
+
+22
+00:01:51,800 --> 00:01:58,400
+Lena: Last thing — the mobile team is hitting 429 errors on the product listing endpoint during peak hours. It's causing significant app degradation.
+
+23
+00:01:59,000 --> 00:02:06,300
+Eggomelette: I looked into this. We're applying rate limits per IP, but the mobile app routes everything through a shared API gateway. The entire user base is sharing one bucket — that's the root cause.
+
+24
+00:02:06,900 --> 00:02:12,200
+Marcus: We need per-user token rate limiting. Eggomelette, could you prototype JWT-based rate limiting with Redis?
+
+25
+00:02:12,800 --> 00:02:18,600
+Eggomelette: Yes, I can have a demo-ready prototype in a feature branch by Friday. I'd propose JWT-based limits with Redis as the backend.
+
+26
+00:02:19,100 --> 00:02:22,800
+Priya: Make that official — JWT rate limiting prototype by Friday. High priority.
+
+27
+00:02:23,400 --> 00:02:28,600
+Marcus: Lena, can you message the mobile-dev Slack channel today explaining the root cause and our timeline?
+
+28
+00:02:29,100 --> 00:02:30,800
+Lena: Will do, sending that today.
+
+29
+00:02:31,400 --> 00:02:38,600
+Priya: Alright — Marcus, prod verification today and performance scope by next Wednesday. Lena, payments call by Thursday, contractor access by Thursday, and mobile Slack message today. Eggomelette, sandbox refresh by Wednesday, webhook design doc by Friday, JWT prototype by Friday, and SSR investigation by Wednesday. Thanks everyone.
+
+30
+00:02:39,200 --> 00:02:41,400
+Marcus: Thanks all. Eggomelette has a full plate.
+
+31
+00:02:41,900 --> 00:02:43,600
+Eggomelette: I'll need a lot of coffee.
+
+32
+00:02:44,100 --> 00:02:46,000
+Lena: We appreciate you. Bye everyone!

@@ -19,6 +19,22 @@ from typing import Optional
 from core.models import Utterance, MeetingState
 
 
+# Module-level callback — set by caller (Streamlit or CLI) before running the graph.
+# Lives outside state so LangGraph's checkpointer never tries to serialize it.
+_INGEST_STATUS_CALLBACK = None
+
+
+def set_status_callback(fn):
+    """Register a progress callback for the ingest node. Call before graph.stream()."""
+    global _INGEST_STATUS_CALLBACK
+    _INGEST_STATUS_CALLBACK = fn
+
+
+def clear_status_callback():
+    global _INGEST_STATUS_CALLBACK
+    _INGEST_STATUS_CALLBACK = None
+
+
 # ─────────────────────────────────────────────
 # Format detection
 # ─────────────────────────────────────────────
@@ -222,37 +238,137 @@ def parse_txt(content: str) -> list[Utterance]:
 # Deepgram audio parser
 # ─────────────────────────────────────────────
 
-def parse_audio_deepgram(file_path: str, speaker_map: Optional[dict] = None) -> list[Utterance]:
+
+# MIME type map for Deepgram
+_AUDIO_MIME = {
+    ".mp3":  "audio/mpeg",
+    ".mp4":  "video/mp4",
+    ".wav":  "audio/wav",
+    ".m4a":  "audio/mp4",
+    ".ogg":  "audio/ogg",
+    ".flac": "audio/flac",
+    ".webm": "audio/webm",
+}
+
+
+def parse_audio_deepgram(
+    file_path: str,
+    speaker_map: Optional[dict] = None,
+    status_callback=None,
+) -> list[Utterance]:
     """
-    Transcribe and diarize audio/video using Deepgram.
-    speaker_map: {"Speaker 0": "Alice", "Speaker 1": "Bob"}
+    Transcribe and diarize audio/video using Deepgram REST API.
+    Sends the correct Content-Type header per file extension.
+
+    Args:
+        file_path: local path to the audio/video file
+        speaker_map: {"Speaker 0": "Alice", ...}
+        status_callback: optional callable(msg: str) for progress updates
     """
-    from deepgram import DeepgramClient, PrerecordedOptions, FileSource
+    import requests
+
+    def _cb(msg: str):
+        if status_callback:
+            status_callback(msg)
+        else:
+            print(f"[Deepgram] {msg}")
 
     api_key = os.getenv("DEEPGRAM_API_KEY")
     if not api_key:
         raise ValueError("DEEPGRAM_API_KEY not set in environment")
 
-    client = DeepgramClient(api_key)
+    ext = Path(file_path).suffix.lower()
+    content_type = _AUDIO_MIME.get(ext, "audio/mpeg")
+
+    url = (
+        "https://api.deepgram.com/v1/listen?"
+        "model=nova-3&smart_format=true&diarize=true"
+        "&punctuate=true&utterances=true&language=en"
+    )
+    headers = {
+        "Authorization": f"Token {api_key}",
+        "Content-Type":  content_type,
+    }
+
+    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    _cb(f"Uploading {file_size_mb:.1f} MB to Deepgram ({ext})…")
 
     with open(file_path, "rb") as f:
-        buffer_data = f.read()
+        response = requests.post(url, headers=headers, data=f, timeout=600)
 
-    payload: FileSource = {"buffer": buffer_data}
+    if not response.ok:
+        raise RuntimeError(
+            f"Deepgram API error {response.status_code}: {response.text[:400]}"
+        )
 
-    options = PrerecordedOptions(
-        model="nova-3",
-        smart_format=True,
-        diarize=True,           # Speaker attribution
-        punctuate=True,
-        utterances=True,        # Return utterance-level segments
-        language="en",
+    _cb("Deepgram transcription complete — parsing results…")
+    result = response.json()
+
+    utterances = _parse_deepgram_response(result, speaker_map)
+
+    # ── Save outputs to data/transcripts/ ──────────────────────────
+    _save_deepgram_outputs(file_path, result, utterances, _cb)
+
+    return utterances
+
+
+def _save_deepgram_outputs(
+    source_path: str,
+    raw_result: dict,
+    utterances: list,
+    cb=None,
+) -> None:
+    """
+    Persist Deepgram outputs so you can inspect them and avoid re-calling the API.
+
+    Saves to: data/transcripts/{filename}_{timestamp}/
+        raw_deepgram.json   — full Deepgram API response
+        transcript.txt      — human-readable speaker-turn transcript
+        utterances.json     — clean structured utterance list
+    """
+    import json
+    from datetime import datetime
+
+    stem = Path(source_path).stem
+    ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = Path("data") / "transcripts" / f"{stem}_{ts}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1 — Raw Deepgram JSON
+    raw_path = out_dir / "raw_deepgram.json"
+    raw_path.write_text(
+        json.dumps(raw_result, indent=2, ensure_ascii=False),
+        encoding="utf-8",
     )
 
-    response = client.listen.rest.v("1").transcribe_file(payload, options)
-    result   = response.to_dict()
+    # 2 — Readable transcript
+    lines = []
+    for u in utterances:
+        speaker = u.speaker if hasattr(u, "speaker") else u.get("speaker", "UNKNOWN")
+        ts_str  = u.timestamp if hasattr(u, "timestamp") else u.get("timestamp", "")
+        text    = u.text if hasattr(u, "text") else u.get("text", "")
+        lines.append(f"[{ts_str}] {speaker}: {text}")
+    txt_path = out_dir / "transcript.txt"
+    txt_path.write_text("\n".join(lines), encoding="utf-8")
 
-    return _parse_deepgram_response(result, speaker_map)
+    # 3 — Structured utterances JSON
+    utt_list = [
+        (u.model_dump() if hasattr(u, "model_dump") else dict(u))
+        for u in utterances
+    ]
+    utt_path = out_dir / "utterances.json"
+    utt_path.write_text(
+        json.dumps(utt_list, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    msg = f"Saved transcription output to {out_dir}"
+    if cb:
+        cb(msg)
+    else:
+        print(f"[Deepgram] {msg}")
+
+
 
 
 def _parse_deepgram_response(
@@ -382,10 +498,22 @@ def ingest_node(state: dict) -> dict:
     LangGraph node: ingest.
     Reads transcript_raw or transcript_path from state.
     Writes utterances to state.
+
+    state may contain:
+        _status_callback: callable(str) for live progress updates
     """
-    path    = state.get("transcript_path")
-    content = state.get("transcript_raw", "")
-    roster  = state.get("participant_roster", [])
+    path     = state.get("transcript_path")
+    content  = state.get("transcript_raw", "")
+    roster   = state.get("participant_roster", [])
+
+    # Use module-level callback (not from state — state gets serialized by checkpointer)
+    cb = _INGEST_STATUS_CALLBACK
+
+    def _cb(msg: str):
+        if cb:
+            cb(msg)
+        else:
+            print(f"[ingest] {msg}")
 
     # Build speaker map from roster aliases
     speaker_map = {}
@@ -395,13 +523,16 @@ def ingest_node(state: dict) -> dict:
     try:
         if path:
             fmt = detect_format(path)
+            _cb(f"Detected format: {fmt.upper()}")
 
             if fmt == "audio":
-                utterances = parse_audio_deepgram(path, speaker_map)
+                _cb("Starting audio transcription via Deepgram…")
+                utterances = parse_audio_deepgram(path, speaker_map, status_callback=cb)
                 # Also store raw transcript text for meeting ID
                 content = " ".join(u.text for u in utterances)
 
             else:
+                _cb(f"Reading {fmt.upper()} file…")
                 with open(path, "r", encoding="utf-8", errors="replace") as f:
                     content = f.read()
 
@@ -412,9 +543,13 @@ def ingest_node(state: dict) -> dict:
                 else:
                     utterances = parse_txt(content)
 
+                _cb(f"Parsed {len(utterances)} utterances from {fmt.upper()}")
+
         elif content:
             # Plain text content passed directly (e.g. from Streamlit text area)
+            _cb("Parsing plain text transcript…")
             utterances = parse_txt(content)
+            _cb(f"Parsed {len(utterances)} utterances")
 
         else:
             return {**state, "errors": state.get("errors", []) + ["No transcript provided"]}
@@ -424,12 +559,13 @@ def ingest_node(state: dict) -> dict:
 
         # Compute meeting ID from content
         meeting_id = _compute_meeting_id(content)
+        _cb(f"Ingestion complete — {len(utterances)} utterances, meeting_id={meeting_id[:8]}…")
 
         return {
             **state,
-            "utterances":   [u.model_dump() for u in utterances],
+            "utterances":     [u.model_dump() for u in utterances],
             "transcript_raw": content,
-            "_meeting_id":  meeting_id,       # temp key, picked up by extract node
+            "_meeting_id":    meeting_id,
         }
 
     except Exception as e:

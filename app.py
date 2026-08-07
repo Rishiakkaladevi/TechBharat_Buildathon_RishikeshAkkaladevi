@@ -1,22 +1,19 @@
 """
-app.py — MeetingMind Streamlit Application
-
-Three pages:
-  1. Upload & Configure — drop transcript, set meeting date, enter roster
-  2. Review & Approve   — review structured record, edit/approve/reject action items
-  3. Audit Log          — view all past agent actions
-
-Integrates with LangGraph via graph.py.
-LangGraph pauses at the human_review node; Streamlit renders state and resumes it on Confirm.
+app.py — MeetingMind  |  Single-page Light Mode Glassmorphism
 """
 
-import os
+from __future__ import annotations
+
 import io
 import json
-import uuid
+import os
 import tempfile
+import time
+import uuid
 from datetime import date, datetime
 from pathlib import Path
+import calendar
+from collections import defaultdict
 
 import pandas as pd
 import streamlit as st
@@ -27,200 +24,376 @@ load_dotenv()
 
 from graph import get_graph
 from storage.audit_log import get_all_entries, init_db
+from core.ingestion import set_status_callback, clear_status_callback
+from integrations.github_client import get_repo_collaborators
 
-# ─────────────────────────────────────────────
-# Page config
-# ─────────────────────────────────────────────
-
+# ── Page config ─────────────────────────────────────────────────
 st.set_page_config(
-    page_title="MeetingMind — Agentic Meeting Assistant",
-    page_icon="🤖",
+    page_title="MeetingMind",
+    page_icon="✨",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
-# ─────────────────────────────────────────────
-# Styling
-# ─────────────────────────────────────────────
-
-st.markdown("""
-<style>
-    /* Main background */
-    .stApp { background-color: #0f1117; color: #e0e0e0; }
-
-    /* Card-like containers */
-    .metric-card {
-        background: #1e2130;
-        border-radius: 10px;
-        padding: 16px;
-        border: 1px solid #2d3250;
-        margin-bottom: 12px;
-    }
-
-    /* Status badges */
-    .badge-approved { background:#1a3a2a; color:#4caf50; border-radius:4px; padding:2px 8px; font-size:0.8em; }
-    .badge-rejected { background:#3a1a1a; color:#f44336; border-radius:4px; padding:2px 8px; font-size:0.8em; }
-    .badge-flagged  { background:#3a2e1a; color:#ff9800; border-radius:4px; padding:2px 8px; font-size:0.8em; }
-    .badge-pending  { background:#1a2a3a; color:#2196f3; border-radius:4px; padding:2px 8px; font-size:0.8em; }
-
-    /* Confidence bar */
-    .conf-high   { color: #4caf50; }
-    .conf-medium { color: #ff9800; }
-    .conf-low    { color: #f44336; }
-
-    /* Section headers */
-    .section-header {
-        font-size: 1.1em;
-        font-weight: 600;
-        color: #7c9cfc;
-        border-bottom: 1px solid #2d3250;
-        padding-bottom: 4px;
-        margin-top: 16px;
-        margin-bottom: 10px;
-    }
-
-    /* Hide streamlit branding */
-    #MainMenu, footer { visibility: hidden; }
-
-    /* Sidebar */
-    .css-1d391kg { background-color: #161b27; }
-</style>
-""", unsafe_allow_html=True)
+# ── Global CSS removed per user request ─────────────────────────
 
 
-# ─────────────────────────────────────────────
-# Session state helpers
-# ─────────────────────────────────────────────
-
-def _init_session():
+# ── Session state ────────────────────────────────────────────────
+def _init_state():
     defaults = {
-        "page":             "upload",
-        "thread_id":        None,
-        "graph_state":      None,     # raw state dict from graph
-        "action_items":     [],
-        "meeting_record":   None,
-        "warnings":         [],
-        "result":           None,
-        "processing":       False,
+        "thread_id": None, "graph_state": None,
+        "action_items": [], "meeting_record": None, "warnings": [],
+        "result": None, "pipeline_step": 0,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
-_init_session()
+_init_state()
 
 
-# ─────────────────────────────────────────────
-# Sidebar navigation
-# ─────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────
+def _norm(val, fb=""):
+    if val is None: return fb
+    return val.value if hasattr(val, "value") else str(val)
 
-with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/robot-2.png", width=60)
-    st.markdown("## 🤖 MeetingMind")
-    st.markdown("*Agentic AI Meeting Assistant*")
-    st.divider()
+def _parse_roster(text: str) -> list:
+    out = []
+    for line in text.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 2:
+            out.append({
+                "name": parts[0], "email": parts[1],
+                "github_username": parts[2] if len(parts) > 2 else None,
+                "aliases": [parts[0].split()[0]],
+            })
+    return out
 
-    page = st.radio(
-        "Navigate",
-        options=["upload", "review", "audit"],
-        format_func=lambda x: {
-            "upload": "📁 Upload & Configure",
-            "review": "✅ Review & Approve",
-            "audit":  "📋 Audit Log",
-        }[x],
-        key="sidebar_page",
-        index=["upload", "review", "audit"].index(st.session_state.page),
-    )
-    st.session_state.page = page
-    st.divider()
+def _stepper_html(active: int) -> str:
+    steps = [
+        ("Ingest",   "Parse transcript"),
+        ("Extract",  "Groq LLM"),
+        ("Resolve",  "Owners & dates"),
+        ("Review",   "Human gate"),
+        ("Execute",  "GitHub Issues"),
+    ]
+    md = []
+    for i, (name, desc) in enumerate(steps):
+        if i < active:    md.append(f"✅ ~~**{name}**: {desc}~~")
+        elif i == active: md.append(f"▶️ **{name}**: {desc}")
+        else:             md.append(f"⏳ {name}: {desc}")
+    return "\n\n".join(md)
 
-    # Status indicators
-    st.markdown("**Environment**")
-    st.markdown("🟢 Groq API" if os.getenv("GROQ_API_KEY") else "🔴 Groq API (not set)")
-    st.markdown("🟢 Deepgram"  if os.getenv("DEEPGRAM_API_KEY") else "🟡 Deepgram (text only)")
-    st.markdown("🟢 GitHub"    if os.getenv("GITHUB_TOKEN") else "🔴 GitHub (not set)")
-    st.markdown("🟢 Slack"     if os.getenv("SLACK_WEBHOOK_URL") else "⚫ Slack (optional)")
+def _build_markdown_report(meeting_record: dict, action_items: list, result: dict | None) -> str:
+    mr      = meeting_record or {}
+    date_s  = mr.get("meeting_date", str(date.today()))
+    created = (result or {}).get("created_issues", [])
+    skipped = (result or {}).get("skipped_duplicates", [])
+
+    lines = [
+        f"# MeetingMind Report — {date_s}",
+        f"\n*Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}*\n",
+        "---",
+        "\n##Meeting Summary\n",
+        mr.get("summary", "_No summary available._"),
+    ]
+
+    decisions = mr.get("decisions", [])
+    if decisions:
+        lines += ["\n##Key Decisions\n"]
+        for d in decisions:
+            text = d.get("decision", str(d)) if isinstance(d, dict) else str(d)
+            ctx  = d.get("context", "") if isinstance(d, dict) else ""
+            lines.append(f"- **{text}**")
+            if ctx:
+                lines.append(f"  > {ctx}")
+
+    risks = mr.get("risks", [])
+    if risks:
+        lines += ["\n##Risks & Blockers\n"]
+        for r in risks:
+            lines.append(f"-  {r}")
+
+    questions = mr.get("open_questions", [])
+    if questions:
+        lines += ["\n##Open Questions\n"]
+        for q in questions:
+            lines.append(f"- ❓ {q}")
+
+    if action_items:
+        lines += ["\n##Action Items\n"]
+        for item in action_items:
+            status   = _norm(item.get("status", "pending"))
+            priority = _norm(item.get("priority", "medium"))
+            owner    = (item.get("resolved_owner") or {}).get("name") or item.get("raw_owner", "—")
+            due      = str(item.get("resolved_date") or item.get("raw_due_date") or "Not set")
+            desc     = item.get("description", "")
+            evidence = item.get("evidence_quote", "")
+
+            lines.append(f"\n### {item.get('title','Untitled')}")
+            lines.append(f"**Status:** {status} | **Priority:** {priority} | **Owner:** {owner} | **Due:** {due}")
+            if desc:
+                lines.append(f"\n{desc}")
+            if evidence:
+                lines.append(f'\n>  *"{evidence}"*')
+                if item.get("evidence_timestamp"):
+                    lines.append(f'> *(@ {item["evidence_timestamp"]})*')
+
+    if created:
+        lines += ["\n##  GitHub Issues Created\n"]
+        for i in created:
+            url   = i.get("task_url") or i.get("issue_url", "#")
+            title = i.get("title", "Issue")
+            lines.append(f"- [{title}]({url})")
+
+    lines += ["\n---", "\n*Report generated by MeetingMind*"]
+    return "\n".join(lines)
 
 
-# ─────────────────────────────────────────────
-# PAGE 1: Upload & Configure
-# ─────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# MAIN APP FLOW
+# ═══════════════════════════════════════════════════════════════
 
-def page_upload():
-    st.markdown("# 📁 Upload Meeting Transcript")
-    st.markdown("Drop your transcript or audio file, configure participants, and process.")
+def main():
+    st.title("MeetingMind")
+    # ── DEV BYPASS ─────────────────────────────────────────────────
+    with st.expander("🧪 Load demo data (dev bypass)", expanded=False):
+        if st.button("Inject dummy meeting output", key="demo_bypass"):
+            from datetime import timedelta
+            today = __import__("datetime").date.today()
+            st.session_state["graph_state"] = {
+                "record": {
+                    "summary": (
+                        "The Q3 planning sync covered finalizing the API spec for the payment "
+                        "gateway, database migration status, and security audit scheduling. "
+                        "Alice will own the API spec and have a draft ready by next Friday. "
+                        "Priya will follow up with Rahul from infra to unblock the database "
+                        "migration. Bob will book the security audit before end of quarter."
+                    ),
+                    "decisions": [
+                        {"decision": "Alice owns the API spec", "context": "to unblock the mobile team"},
+                        {"decision": "Drop the old authentication system", "context": "as decided in the last meeting"},
+                        {"decision": "Security audit booked for Sept 20", "context": "Bob to confirm vendor"},
+                    ],
+                    "risks": [
+                        "Infra issue may cause database migration to slip past the sprint deadline if not resolved by Wednesday",
+                        "No fallback plan if the payment gateway vendor delays the API docs",
+                    ],
+                    "open_questions": [
+                        "Do we need legal sign-off before launching the new payment flow?",
+                        "Who owns the deprecation notice for the old auth system?",
+                    ],
+                },
+                "action_items": [
+                    {
+                        "title": "Draft API spec v1",
+                        "description": "Cover all payment gateway endpoints including auth, webhooks, and error codes.",
+                        "raw_owner": "Alice", "resolved_owner": {"name": "Alice", "email": "", "github_username": None},
+                        "raw_due_date": str(today + timedelta(days=7)), "resolved_date": str(today + timedelta(days=7)),
+                        "priority": "high", "status": "pending", "confidence": 0.92,
+                        "evidence_quote": "Alice, can you have the API spec ready by next Friday?",
+                        "evidence_timestamp": "00:04:12",
+                    },
+                    {
+                        "title": "Follow up with Rahul on DB migration blockers",
+                        "description": "Check if the infra ticket has been picked up and get an ETA.",
+                        "raw_owner": "Priya", "resolved_owner": {"name": "Priya", "email": "", "github_username": None},
+                        "raw_due_date": str(today + timedelta(days=2)), "resolved_date": str(today + timedelta(days=2)),
+                        "priority": "high", "status": "pending", "confidence": 0.88,
+                        "evidence_quote": "Priya, please loop in Rahul and get us an update by Wednesday.",
+                        "evidence_timestamp": "00:11:45",
+                    },
+                    {
+                        "title": "Book security audit vendor",
+                        "description": "Confirm the Sept 20 slot with the vendor and send calendar invites.",
+                        "raw_owner": "Bob", "resolved_owner": {"name": "Bob", "email": "", "github_username": None},
+                        "raw_due_date": str(today + timedelta(days=14)), "resolved_date": str(today + timedelta(days=14)),
+                        "priority": "medium", "status": "pending", "confidence": 0.81,
+                        "evidence_quote": "Bob will handle scheduling the security audit.",
+                        "evidence_timestamp": "00:18:33",
+                    },
+                    {
+                        "title": "Write deprecation notice for old auth system",
+                        "description": "Notify internal teams and external partners via email and docs.",
+                        "raw_owner": "Alice", "resolved_owner": {"name": "Alice", "email": "", "github_username": None},
+                        "raw_due_date": str(today + timedelta(days=21)), "resolved_date": str(today + timedelta(days=21)),
+                        "priority": "low", "status": "approved", "confidence": 0.76,
+                        "evidence_quote": "The deprecation notice should go out before end of month.",
+                        "evidence_timestamp": "00:22:10",
+                    },
+                ],
+                "participant_roster": [
+                    {"name": "Alice", "email": "alice@example.com", "github_username": "alice-dev", "aliases": ["Alice"]},
+                    {"name": "Priya", "email": "priya@example.com", "github_username": "priya-eng", "aliases": ["Priya"]},
+                    {"name": "Bob",   "email": "bob@example.com",   "github_username": "bob-ops",  "aliases": ["Bob"]},
+                ],
+            }
+            st.session_state["action_items"] = st.session_state["graph_state"]["action_items"]
+            st.session_state["meeting_record"] = st.session_state["graph_state"]["record"]
+            st.session_state["pipeline_step"] = 3  # Review stage
+            st.success("✅ Demo data loaded — scroll down to see the full UI!")
+            st.rerun()
 
-    col1, col2 = st.columns([2, 1])
+    # ── SECTION 1: Upload & Config ──
+    left, right = st.columns([3, 2], gap="large")
 
-    with col1:
-        st.markdown('<div class="section-header">Transcript File</div>', unsafe_allow_html=True)
-        uploaded_file = st.file_uploader(
-            "Upload transcript or audio",
-            type=["txt", "vtt", "srt", "mp3", "mp4", "wav", "m4a"],
-            help="Text formats (.txt, .vtt, .srt) are processed instantly. Audio files use Deepgram.",
-            key="transcript_upload",
-        )
+    with left:
+        with st.container(border=True):
+            st.markdown(
+                '<span style="font-size:0.7em;font-weight:800;letter-spacing:0.12em;'
+                'text-transform:uppercase;color:#c1440e">1. Transcript File</span>',
+                unsafe_allow_html=True,
+            )
+            uploaded_file = st.file_uploader(
+                " ",
+                type=["txt", "vtt", "srt", "mp3", "mp4", "wav", "m4a"],
+                label_visibility="collapsed",
+                key="transcript_upload",
+            )
+            
+            if uploaded_file is not None:
+                st.session_state["saved_file"] = uploaded_file
 
-        if uploaded_file:
-            ext = Path(uploaded_file.name).suffix.lower()
-            is_audio = ext in {".mp3", ".mp4", ".wav", ".m4a"}
+            active_file = uploaded_file or st.session_state.get("saved_file")
 
-            if is_audio:
-                st.info(f"🎙️ Audio file detected ({uploaded_file.name}) — Deepgram will transcribe and diarize.")
-            else:
-                preview = uploaded_file.read(2000).decode("utf-8", errors="replace")
-                uploaded_file.seek(0)
-                st.markdown('<div class="section-header">Preview (first 2000 chars)</div>', unsafe_allow_html=True)
-                st.code(preview, language=None)
+            if active_file:
+                if uploaded_file is None:
+                    st.info(f"💾 Retained file: **{active_file.name}**")
+                    if st.button("Clear saved file", key="clear_file"):
+                        st.session_state["saved_file"] = None
+                        st.rerun()
 
-        st.markdown('<div class="section-header">Meeting Date</div>', unsafe_allow_html=True)
-        meeting_date = st.date_input(
-            "Meeting date",
-            value=date.today(),
-            help="Used to resolve relative dates like 'by next Friday'",
-        )
+                ext = Path(active_file.name).suffix.lower()
+                if ext in {".mp3", ".mp4", ".wav", ".m4a"}:
+                    st.info(" Audio detected — Deepgram will transcribe & diarize")
+                else:
+                    preview = active_file.read(1600).decode("utf-8", errors="replace")
+                    active_file.seek(0)
+                    with st.expander("Preview transcript (first 1600 chars)"):
+                        st.code(preview, language=None)
 
-    with col2:
-        st.markdown('<div class="section-header">Participant Roster</div>', unsafe_allow_html=True)
-        st.markdown("*Used for owner resolution. Format: `name, email, github_username (optional)`*")
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
-        roster_text = st.text_area(
-            "Participants (one per line)",
-            placeholder="Alice Chen, alice@company.com, alice-gh\nBob Kumar, bob@company.com\nPriya Sharma, priya@company.com, priya-sh",
-            height=200,
-            key="roster_input",
-        )
+        dc, rc = st.columns(2)
+        with dc:
+            with st.container(border=True):
+                st.markdown(
+                    '<span style="font-size:0.68em;font-weight:800;letter-spacing:0.1em;'
+                    'text-transform:uppercase;color:#c1440e">Meeting Date</span>',
+                    unsafe_allow_html=True,
+                )
+                meeting_date = st.date_input(
+                    "Date", value=date.today(), label_visibility="collapsed", key="meeting_date_inp"
+                )
+        with rc:
+            with st.container(border=True):
+                st.markdown(
+                    '<span style="font-size:0.68em;font-weight:800;letter-spacing:0.1em;'
+                    'text-transform:uppercase;color:#c1440e">Reviewer</span>',
+                    unsafe_allow_html=True,
+                )
+                reviewer = st.text_input(
+                    "Name", value="demo_user", label_visibility="collapsed", key="reviewer_name"
+                )
 
-        st.markdown('<div class="section-header">Reviewer Name</div>', unsafe_allow_html=True)
-        reviewer = st.text_input(
-            "Your name (for audit log)",
-            value="demo_user",
-            key="reviewer_name",
-        )
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
-    st.divider()
+        with st.container(border=True):
+            st.markdown(
+                '<span style="font-size:0.68em;font-weight:800;letter-spacing:0.1em;'
+                'text-transform:uppercase;color:#c1440e">Participant Roster</span>',
+                unsafe_allow_html=True,
+            )
+            st.caption("Participants will be auto-discovered from the transcript after processing. You can map them to GitHub accounts in the Review section below.")
 
-    # Process button
-    col_btn, col_info = st.columns([1, 3])
-    with col_btn:
-        process_btn = st.button(
-            "⚡ Process Meeting",
-            type="primary",
-            disabled=uploaded_file is None,
-            use_container_width=True,
-        )
+        st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
+        btn_col, _, _ = st.columns([2,1,1])
+        with btn_col:
+            st.button(
+                "Process Meeting",
+                type="primary",
+                disabled=st.session_state.get("saved_file") is None and uploaded_file is None,
+                key="process_btn",
+            )
 
-    if process_btn and uploaded_file:
-        # Parse roster
-        roster = _parse_roster(roster_text)
+    # ── Pipeline Status & Last Run ──
+    with right:
+        # Derive step from actual session state so it's always accurate
+        _result     = st.session_state.get("result")
+        _has_record = bool(st.session_state.get("meeting_record"))
+        _has_ai     = bool(st.session_state.get("action_items"))
+        if _result:
+            _derived_step = 5          # Execute done
+        elif _has_record or _has_ai:
+            _derived_step = 3          # Review
+        else:
+            _derived_step = st.session_state.get("pipeline_step", 0)
+        step = _derived_step
+        with st.container(border=True):
+            st.markdown(
+                '<span style="font-size:0.68em;font-weight:800;letter-spacing:0.1em;'
+                'text-transform:uppercase;color:#c1440e">Pipeline</span>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f'<div style="margin-top:14px">{_stepper_html(step)}</div>',
+                unsafe_allow_html=True,
+            )
 
-        # Save uploaded file to temp location
-        suffix = Path(uploaded_file.name).suffix
+        result = st.session_state.get("result")
+        if result:
+            created = result.get("created_issues", [])
+            skipped = result.get("skipped_duplicates", [])
+            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown(
+                    '<span style="font-size:0.68em;font-weight:800;letter-spacing:0.1em;'
+                    'text-transform:uppercase;color:#16a34a">Last Run</span>',
+                    unsafe_allow_html=True,
+                )
+                mc1, mc2 = st.columns(2)
+                mc1.metric("Issues Created", len(created))
+                mc2.metric("Skipped Dupes",  len(skipped))
+                for i in created:
+                    url   = i.get("task_url") or i.get("issue_url", "#")
+                    title = i.get("title", "Issue")
+                    st.markdown(
+                        f'<a href="{url}" target="_blank" style="font-size:0.83em;color:#c1440e;'
+                        f'text-decoration:none">→ {title}</a>',
+                        unsafe_allow_html=True,
+                    )
+
+        # Download report button
+        mr = st.session_state.get("meeting_record") or {}
+        ai = st.session_state.get("action_items", [])
+        if mr or ai:
+            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+            md_report = _build_markdown_report(
+                mr if isinstance(mr, dict) else (mr.model_dump() if hasattr(mr, "model_dump") else {}),
+                ai, result,
+            )
+            st.download_button(
+                "Download Markdown Report",
+                data=md_report.encode("utf-8"),
+                file_name=f"meetingmind_{date.today()}.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+
+    # ── Processor Logic ──
+    active_file = st.session_state.get("saved_file") or uploaded_file
+    _should_process = st.session_state.get("process_btn") and active_file
+
+    if _should_process:
+        # Build a minimal roster from discovered speakers if available,
+        # otherwise start with empty — speakers get mapped in review
+        roster = st.session_state.get("participant_roster_final", [])
+        suffix = Path(active_file.name).suffix
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(uploaded_file.read())
+            active_file.seek(0)
+            tmp.write(active_file.read())
             tmp_path = tmp.name
 
-        # Build initial state
         initial_state = {
             "transcript_path":    tmp_path,
             "transcript_raw":     "",
@@ -232,373 +405,751 @@ def page_upload():
             "errors":             [],
             "warnings":           [],
         }
-
         thread_id = str(uuid.uuid4())
         st.session_state.thread_id = thread_id
-
         config = {"configurable": {"thread_id": thread_id}}
         graph  = get_graph()
 
-        # Run graph until interrupt
-        progress_bar = st.progress(0, text="Starting pipeline...")
-        status_text  = st.empty()
+        with st.status("Starting pipeline…", expanded=True) as status:
+            def _st_callback(msg: str):
+                status.update(label=msg, state="running")
+            set_status_callback(_st_callback)
 
-        try:
-            node_labels = {
-                "ingest":       ("Ingesting transcript...", 25),
-                "extract":      ("Extracting with Groq LLM...", 55),
-                "resolve":      ("Resolving owners and dates...", 80),
-                "add_warnings": ("Flagging ambiguous items...", 90),
-                "human_review": ("Ready for your review!", 100),
-            }
+            try:
+                final_state = None
+                node_labels = [
+                    "Ingesting transcript…",
+                    "Extracting action items with Groq…",
+                    "Resolving owners & due dates…",
+                    "Preparing human review…",
+                ]
+                for n, event in enumerate(graph.stream(
+                    initial_state, config=config, stream_mode="values"
+                )):
+                    final_state = event
+                    errs = event.get("errors", [])
+                    if errs:
+                        status.update(label=f"Error: {errs[-1]}", state="error", expanded=True)
+                        st.error(f"Pipeline error: {errs[-1]}")
+                        break
 
-            final_state = None
-            for event in graph.stream(initial_state, config=config, stream_mode="values"):
-                final_state = event
-                # Try to update progress from last completed node
-                # (streaming gives us state snapshots)
+                    if n < len(node_labels):
+                        status.update(label=node_labels[n], state="running")
+                    st.session_state.pipeline_step = min(n + 1, 4)
 
-            # Graph is now interrupted at human_review
-            if final_state:
-                st.session_state.graph_state    = final_state
-                st.session_state.action_items   = final_state.get("action_items", [])
-                st.session_state.meeting_record  = final_state.get("meeting_record_raw", {})
-                st.session_state.warnings        = final_state.get("warnings", [])
-                st.session_state.page            = "review"
+                if final_state and not final_state.get("errors"):
+                    mr_raw = final_state.get("meeting_record_raw")
+                    st.session_state.graph_state    = final_state
+                    st.session_state.action_items   = final_state.get("action_items", [])
+                    st.session_state.warnings       = final_state.get("warnings", [])
+                    st.session_state.meeting_record = (
+                        mr_raw.model_dump() if hasattr(mr_raw, "model_dump") else (mr_raw or {})
+                    )
+                    st.session_state.pipeline_step  = 3
+                    status.update(label="Ready for review!", state="complete", expanded=False)
+                    time.sleep(1.2)
+                    st.rerun()
 
-                progress_bar.progress(100, text="✅ Processing complete!")
-                st.success(f"✅ Found {len(st.session_state.action_items)} action items. Moving to review...")
-                st.rerun()
+            except Exception as e:
+                status.update(label=f"Pipeline error: {e}", state="error", expanded=True)
+                st.exception(e)
+            finally:
+                clear_status_callback()
 
-        except Exception as e:
-            st.error(f"❌ Pipeline error: {str(e)}")
-            st.exception(e)
+    # ── SECTION 2: Review (Conditional) ──
+    mr = st.session_state.get("meeting_record")
+    ai = st.session_state.get("action_items", [])
+
+    if mr or ai:
+        st.divider()
+        st.markdown("## Review & Execute")
+        
+        warnings = st.session_state.get("warnings", [])
+        if warnings:
+            with st.expander(f" {len(warnings)} flagged items — click to expand"):
+                for w in warnings:
+                    st.warning(w)
+
+        # ── Participant → GitHub Mapping panel ──────────────────────
+        _render_participant_mapper()
+
+        # Flat view: Summary -> Items
+        _render_summary(mr, ai)
+        
+        st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+        edited_items = _render_items(ai)
+        
+        approved = [i for i in edited_items if i.get("status") == "approved"]
+        rejected = [i for i in edited_items if i.get("status") == "rejected"]
+        pending  = len(ai) - len(approved) - len(rejected)
+
+        st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            scol, bcol = st.columns([3, 1])
+            with scol:
+                st.markdown(
+                    f'<div style="display:flex;gap:24px;align-items:center;padding:10px 0">'
+                    f'  <span style="font-size:1.1em;color:#16a34a;font-weight:700"> {len(approved)} approved</span>'
+                    f'  <span style="font-size:1.1em;color:#ef4444;font-weight:700"> {len(rejected)} rejected</span>'
+                    f'  <span style="font-size:1.1em;color:#7a6254;font-weight:600">· {pending} pending</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            with bcol:
+                if st.button(
+                    "Confirm & Execute",
+                    type="primary",
+                    disabled=len(approved) == 0,
+                    key="confirm_btn",
+                    use_container_width=True,
+                ):
+                    _execute(approved, rejected)
+
+    # ── SECTION 3: Audit Log (Expander) ──
+    st.divider()
+    with st.expander("📝 Audit Log", expanded=False):
+        _render_audit_log()
 
 
-def _parse_roster(roster_text: str) -> list[dict]:
-    """Parse roster text area into list of participant dicts."""
-    roster = []
-    for line in roster_text.strip().splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) >= 2:
-            p = {
-                "name":  parts[0],
-                "email": parts[1],
-                "github_username": parts[2] if len(parts) > 2 else None,
-                "aliases": [parts[0].split()[0]],  # first name as alias
-            }
-            roster.append(p)
-    return roster
+def _render_participant_mapper():
+    """
+    Renders the Participant → GitHub Mapper panel in the Review section.
+    Shows each unique speaker discovered in the transcript with a dropdown
+    of GitHub repo collaborators, auto-fuzzy-matched. User can override.
+    Saves the final mapping to st.session_state['participant_roster_final'].
+    """
+    from rapidfuzz import process as fuzz_process, fuzz
 
+    graph_state = st.session_state.get("graph_state") or {}
+    utterances  = graph_state.get("utterances", [])
 
-# ─────────────────────────────────────────────
-# PAGE 2: Review & Approve
-# ─────────────────────────────────────────────
-
-def page_review():
-    action_items    = st.session_state.get("action_items", [])
-    meeting_record  = st.session_state.get("meeting_record", {})
-    warnings        = st.session_state.get("warnings", [])
-
-    if not action_items and not meeting_record:
-        st.warning("No meeting processed yet. Go to **Upload & Configure** first.")
+    if not utterances:
         return
 
-    st.markdown("# ✅ Review & Approve Action Items")
+    # Collect unique speaker labels from utterances
+    speakers = list(dict.fromkeys(
+        u.get("speaker", "Unknown") for u in utterances
+        if u.get("speaker")
+    ))
 
-    # Warnings banner
-    if warnings:
-        with st.expander(f"⚠️ {len(warnings)} items need attention", expanded=True):
-            for w in warnings:
-                st.warning(w)
+    if not speakers:
+        return
 
-    # ── Meeting record (left) + Action items (right) ──
-    left_col, right_col = st.columns([1, 2])
+    # Fetch GitHub collaborators (cached per session to avoid repeated API calls)
+    if "github_collaborators_cache" not in st.session_state:
+        with st.spinner("Fetching GitHub collaborators…"):
+            st.session_state["github_collaborators_cache"] = get_repo_collaborators()
 
-    with left_col:
-        _render_meeting_record(meeting_record)
+    collabs = st.session_state["github_collaborators_cache"]
+    collab_options = ["(Not a collaborator)"] + [
+        f"{c['name']} (@{c['login']})" for c in collabs
+    ]
+    collab_login_map = {
+        f"{c['name']} (@{c['login']})": c["login"] for c in collabs
+    }
+    collab_name_map = {
+        f"{c['name']} (@{c['login']})": c["name"] for c in collabs
+    }
 
-    with right_col:
-        _render_action_items_editor(action_items)
+    def _best_match(speaker_label: str) -> int:
+        """Returns index into collab_options for best fuzzy match, or 0 (Not a collaborator)."""
+        if not collabs:
+            return 0
+        candidate_labels = [f"{c['name']} (@{c['login']})" for c in collabs]
+        result = fuzz_process.extractOne(speaker_label, candidate_labels, scorer=fuzz.WRatio)
+        if result and result[1] >= 60:
+            matched_label = result[0]
+            return collab_options.index(matched_label)
+        return 0
 
-    # Sidebar preview + confirm button
-    with st.sidebar:
-        st.divider()
-        approved_count = sum(1 for i in st.session_state.get("edited_items", action_items)
-                             if i.get("status") == "approved")
-        rejected_count = sum(1 for i in st.session_state.get("edited_items", action_items)
-                             if i.get("status") == "rejected")
-
-        st.markdown(f"""
-        **What will happen:**
-        - 🟢 Create **{approved_count}** GitHub Issues
-        - 🔴 Reject **{rejected_count}** items
-        - 📢 Post Slack recap: {'Yes' if os.getenv('SLACK_WEBHOOK_URL') else 'No'}
-        """)
-        st.divider()
-
-        confirm_btn = st.button(
-            "🚀 Confirm & Execute",
-            type="primary",
-            use_container_width=True,
-            disabled=approved_count == 0,
+    with st.container(border=True):
+        st.markdown(
+            '<span style="font-size:0.7em;font-weight:800;letter-spacing:0.12em;'
+            'text-transform:uppercase;color:#16a34a">Participant → GitHub Mapping</span>',
+            unsafe_allow_html=True,
         )
+        if not collabs:
+            st.caption("GitHub not configured or no collaborators found — mapping unavailable.")
+        else:
+            st.caption(
+                f"Found **{len(speakers)}** speaker(s) in transcript · **{len(collabs)}** collaborator(s) in repo. "
+                "Confirm or override auto-detected assignments below."
+            )
 
-        if confirm_btn:
-            _execute_approved()
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-
-def _render_meeting_record(record: dict):
-    if not record:
-        return
-
-    st.markdown('<div class="section-header">📋 Summary</div>', unsafe_allow_html=True)
-    st.markdown(record.get("summary", "_No summary_"))
-
-    decisions = record.get("decisions", [])
-    if decisions:
-        st.markdown(f'<div class="section-header">✅ Decisions ({len(decisions)})</div>', unsafe_allow_html=True)
-        for d in decisions:
-            ts = f" `{d.get('timestamp')}`" if d.get("timestamp") else ""
-            st.markdown(f"• {d.get('decision', '')}{ts}")
-
-    questions = record.get("open_questions", [])
-    if questions:
-        st.markdown(f'<div class="section-header">❓ Open Questions ({len(questions)})</div>', unsafe_allow_html=True)
-        for q in questions:
-            st.markdown(f"• {q}")
-
-    risks = record.get("risks", [])
-    if risks:
-        st.markdown(f'<div class="section-header">⚠️ Risks ({len(risks)})</div>', unsafe_allow_html=True)
-        for r in risks:
-            st.markdown(f"• {r}")
-
-
-def _render_action_items_editor(action_items: list[dict]):
-    st.markdown(f'<div class="section-header">🎯 Action Items ({len(action_items)})</div>',
-                unsafe_allow_html=True)
-
-    if not action_items:
-        st.info("No action items extracted.")
-        return
-
-    # Get roster for owner dropdown
-    roster  = st.session_state.get("graph_state", {}).get("participant_roster", [])
-    owners  = [p.get("name", "") for p in roster] if roster else []
-
-    edited_items = []
-    for i, item in enumerate(action_items):
-        with st.container():
-            # Confidence color
-            conf = item.get("confidence", 0)
-            conf_color = "conf-high" if conf >= 0.85 else "conf-medium" if conf >= 0.6 else "conf-low"
-
-            # Header row
-            h_col1, h_col2, h_col3 = st.columns([4, 1, 1])
-            with h_col1:
-                st.markdown(f"**{item.get('title', 'Untitled')}**")
-            with h_col2:
-                st.markdown(f'<span class="{conf_color}">{int(conf*100)}% confident</span>',
-                            unsafe_allow_html=True)
-            with h_col3:
-                status = st.selectbox(
-                    "Status",
-                    options=["pending", "approved", "rejected"],
-                    index=["pending", "approved", "rejected"].index(item.get("status", "pending")),
-                    key=f"status_{i}",
+        roster = []
+        for speaker in speakers:
+            col_label, col_select = st.columns([2, 3])
+            with col_label:
+                st.markdown(
+                    f'<div style="padding:8px 0;font-size:0.9em;font-weight:700;color:#1a1008;">'
+                    f'🎙️ {speaker}</div>',
+                    unsafe_allow_html=True,
+                )
+            with col_select:
+                default_idx = _best_match(speaker) if collabs else 0
+                chosen = st.selectbox(
+                    f"Map {speaker}",
+                    options=collab_options,
+                    index=default_idx,
+                    key=f"collab_map_{speaker}",
                     label_visibility="collapsed",
                 )
 
-            # Edit fields
-            e_col1, e_col2, e_col3 = st.columns([2, 2, 1])
-
-            with e_col1:
-                if owners:
-                    resolved_name = (item.get("resolved_owner") or {}).get("name", item.get("raw_owner", ""))
-                    owner_idx = owners.index(resolved_name) if resolved_name in owners else 0
-                    selected_owner = st.selectbox(
-                        "Owner",
-                        options=owners,
-                        index=owner_idx,
-                        key=f"owner_{i}",
-                    )
-                else:
-                    selected_owner = st.text_input(
-                        "Owner",
-                        value=item.get("raw_owner", ""),
-                        key=f"owner_{i}",
-                    )
-
-            with e_col2:
-                raw_date = item.get("resolved_date")
-                default_date = date.today()
-                if raw_date:
-                    try:
-                        default_date = date.fromisoformat(str(raw_date))
-                    except Exception:
-                        pass
-
-                if item.get("date_status") == "failed":
-                    st.warning(f"⚠️ Due date unresolved: '{item.get('raw_due_date', 'none')}'")
-                    selected_date = st.date_input("Set due date", value=default_date, key=f"date_{i}")
-                else:
-                    selected_date = st.date_input(
-                        f"Due date (from: '{item.get('raw_due_date', '')}' )",
-                        value=default_date,
-                        key=f"date_{i}",
-                    )
-
-            with e_col3:
-                priority = st.selectbox(
-                    "Priority",
-                    options=["high", "medium", "low"],
-                    index=["high", "medium", "low"].index(item.get("priority", "medium")),
-                    key=f"priority_{i}",
-                )
-
-            # Evidence (expandable)
-            if item.get("evidence_quote"):
-                with st.expander("🗣️ Evidence"):
-                    ts = item.get("evidence_timestamp", "")
-                    st.markdown(f"> *\"{item['evidence_quote']}\"*")
-                    if ts:
-                        st.markdown(f"📍 `{ts}`")
-
-            # Build updated item
-            updated = dict(item)
-            updated["status"]   = status
-
-            # Update resolved_owner name
-            if updated.get("resolved_owner"):
-                updated["resolved_owner"]["name"] = selected_owner
-                # Try to find email from roster
-                for p in roster:
-                    if p.get("name") == selected_owner:
-                        updated["resolved_owner"]["email"] = p.get("email", "")
-                        updated["resolved_owner"]["github_username"] = p.get("github_username")
-                        break
+            # Build roster entry from selection
+            if chosen == "(Not a collaborator)":
+                roster.append({
+                    "name":            speaker,
+                    "email":           "",
+                    "github_username": None,
+                    "aliases":         [speaker.split()[0]] if speaker else [],
+                })
             else:
-                updated["resolved_owner"] = {"name": selected_owner, "email": "", "github_username": None, "match_score": 1.0, "resolution_method": "manual"}
+                roster.append({
+                    "name":            collab_name_map.get(chosen, speaker),
+                    "email":           "",
+                    "github_username": collab_login_map.get(chosen),
+                    "aliases":         [speaker, speaker.split()[0]] if speaker else [],
+                })
 
-            updated["resolved_date"] = selected_date.isoformat()
-            updated["priority"]      = priority
-            edited_items.append(updated)
+        # Persist the final mapped roster to session state so the pipeline and execute step can use it
+        st.session_state["participant_roster_final"] = roster
 
-            st.divider()
+        # Also update graph_state so _render_items owner dropdowns show correct names
+        if st.session_state.get("graph_state"):
+            st.session_state["graph_state"]["participant_roster"] = roster
 
-    st.session_state["edited_items"] = edited_items
+        # ── KEY FIX: Push github_username into each action item immediately ──────
+        # The pipeline ran before the mapping existed, so resolved_owner.github_username
+        # is None for all items. We now backfill it from the roster using raw_owner
+        # matching (the speaker label from the transcript) so that Confirm & Execute
+        # sends the correct assignee to GitHub and triggers their notification.
+        action_items = st.session_state.get("action_items", [])
+        for item in action_items:
+            raw_owner = (item.get("raw_owner") or "").strip()
+            if not raw_owner:
+                continue
+            for entry in roster:
+                # Match against aliases (which include the original speaker label, e.g. "Eggomelette")
+                all_names = [entry.get("name", "")] + entry.get("aliases", [])
+                if any(raw_owner.lower() == n.lower() for n in all_names if n):
+                    if item.get("resolved_owner") is None:
+                        item["resolved_owner"] = {
+                            "name": entry.get("name", raw_owner),
+                            "email": entry.get("email", ""),
+                            "github_username": entry.get("github_username"),
+                            "match_score": 1.0,
+                            "resolution_method": "participant_map",
+                        }
+                    else:
+                        item["resolved_owner"]["github_username"] = entry.get("github_username")
+                        item["resolved_owner"]["name"] = entry.get("name", raw_owner)
+                    break
+        st.session_state["action_items"] = action_items
 
 
-def _execute_approved():
-    """Resume the LangGraph graph with the human's decisions."""
-    edited_items = st.session_state.get("edited_items", [])
-    thread_id   = st.session_state.get("thread_id")
 
-    approved = [i for i in edited_items if i.get("status") == "approved"]
-    rejected = [i for i in edited_items if i.get("status") == "rejected"]
+def _render_summary(record: dict, action_items: list):
+    if not record and not action_items:
+        return
 
-    config = {"configurable": {"thread_id": thread_id}}
-    graph  = get_graph()
+    summary   = record.get("summary", "")
+    decisions = record.get("decisions", [])
+    risks     = record.get("risks", [])
+    questions = record.get("open_questions", [])
 
-    with st.spinner(f"Creating {len(approved)} GitHub Issues..."):
+    st.subheader("Meeting Summary")
+    if summary:
+        st.write(summary)
+
+    if decisions or risks or questions:
+        d_col, r_col = st.columns(2)
+        with d_col:
+            if decisions:
+                st.subheader("Key Decisions")
+                for d in decisions:
+                    text = d.get("decision", str(d)) if isinstance(d, dict) else str(d)
+                    ctx  = d.get("context", "") if isinstance(d, dict) else ""
+                    st.markdown(f"- **{text}**")
+                    if ctx:
+                        st.caption(ctx)
+
+            if risks:
+                st.subheader("Risks & Blockers")
+                for r in risks:
+                    st.warning(f"⚠️ {r}")
+
+            if questions:
+                st.subheader("Open Questions")
+                for q in questions:
+                    st.info(f"❓ {q}")
+
+        with r_col:
+            if action_items:
+                st.subheader("Deadlines Timeline")
+                events = []
+                for item in action_items:
+                    due = item.get("resolved_date") or item.get("raw_due_date")
+                    if due:
+                        try:
+                            # Using __import__ to avoid scope issues in re.sub
+                            d_obj = __import__("datetime").date.fromisoformat(str(due).split("T")[0].split(" ")[0])
+                            events.append({
+                                "title": item.get("title", "Action Item"),
+                                "date":  d_obj,
+                                "owner": (item.get("resolved_owner") or {}).get("name") or item.get("raw_owner", "—"),
+                                "prio":  _norm(item.get("priority","medium"),"medium").lower(),
+                            })
+                        except:
+                            pass
+                
+                if not events:
+                    st.caption("No action items with dates to display.")
+                else:
+                    events.sort(key=lambda x: x["date"])
+                    for ev in events:
+                        st.markdown(f"**{ev['date'].strftime('%b %d')}** - {ev['title']} (👤 {ev['owner']})")
+        d_col, r_col = st.columns(2)
+        with d_col:
+            if decisions:
+                # ── Key Decisions card ──────────────────────────────
+                dec_html = """
+<div class="ac-card" style="margin-bottom:12px">
+  <div class="ac-header" style="border-bottom:none">
+    <div class="ac-header-body" style="padding-bottom:0">
+      <div style="font-size:0.65em;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#1a6b55;margin-bottom:10px">Key Decisions</div>"""
+                for d in decisions:
+                    text = d.get("decision", str(d)) if isinstance(d, dict) else str(d)
+                    ctx  = d.get("context", "") if isinstance(d, dict) else ""
+                    dec_html += f"""
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid #e8e4db;">
+        <div style="width:8px;height:8px;border-radius:50%;background:#1a6b55;flex-shrink:0;margin-top:5px"></div>
+        <div>
+          <div style="font-size:0.88em;font-weight:600;color:#1a1008;line-height:1.4">{text}</div>
+          {"" if not ctx else f'<div style=\"font-size:0.78em;color:#7a6254;margin-top:3px\">{ctx}</div>'}
+        </div>
+      </div>"""
+                dec_html += "\n    </div>\n  </div>\n</div>"
+                st.markdown(dec_html, unsafe_allow_html=True)
+
+            if risks:
+                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                # ── Risks & Blockers card ────────────────────────────
+                risk_html = """
+<div class="ac-card" style="margin-bottom:12px">
+  <div class="ac-header" style="border-bottom:none">
+    <div class="ac-header-body" style="padding-bottom:0">
+      <div style="font-size:0.65em;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#a05c00;margin-bottom:10px">Risks &amp; Blockers</div>"""
+                for r in risks:
+                    risk_html += f"""
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid #e8e4db;">
+        <div style="width:8px;height:8px;border-radius:2px;background:#a05c00;flex-shrink:0;margin-top:5px;transform:rotate(45deg)"></div>
+        <div style="font-size:0.88em;font-weight:600;color:#1a1008;line-height:1.4">⚠️ {r}</div>
+      </div>"""
+                risk_html += "\n    </div>\n  </div>\n</div>"
+                st.markdown(risk_html, unsafe_allow_html=True)
+
+            if questions:
+                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                # ── Open Questions card ──────────────────────────────
+                q_html = """
+<div class="ac-card" style="margin-bottom:12px">
+  <div class="ac-header" style="border-bottom:none">
+    <div class="ac-header-body" style="padding-bottom:0">
+      <div style="font-size:0.65em;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#7c5070;margin-bottom:10px">Open Questions</div>"""
+                for q in questions:
+                    q_html += f"""
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid #e8e4db;">
+        <div style="width:8px;height:8px;border-radius:50%;background:none;border:2px solid #7c5070;flex-shrink:0;margin-top:5px"></div>
+        <div style="font-size:0.88em;font-weight:600;color:#1a1008;line-height:1.4">❓ {q}</div>
+      </div>"""
+                q_html += "\n    </div>\n  </div>\n</div>"
+                st.markdown(q_html, unsafe_allow_html=True)
+
+        with r_col:
+            # Deadlines (Custom Glassmorphic Layout)
+            if action_items:
+                st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+                # Parse and sort events
+                events = []
+                for item in action_items:
+                    due = item.get("resolved_date") or item.get("raw_due_date")
+                    if due:
+                        try:
+                            d_obj = date.fromisoformat(str(due).split("T")[0].split(" ")[0])
+                            events.append({
+                                "title": item.get("title", "Action Item"),
+                                "date":  d_obj,
+                                "owner": (item.get("resolved_owner") or {}).get("name") or item.get("raw_owner", "—"),
+                                "prio":  _norm(item.get("priority","medium"),"medium").lower(),
+                            })
+                        except:
+                            pass
+
+                if not events:
+                    st.caption("No action items with dates to display.")
+                else:
+                    events.sort(key=lambda x: x["date"])
+                    events_by_date = defaultdict(list)
+                    for ev in events:
+                        events_by_date[ev["date"]].append(ev)
+
+                    cal_date   = events[0]["date"]
+                    cal        = calendar.Calendar(firstweekday=6)
+                    month_days = cal.monthdayscalendar(cal_date.year, cal_date.month)
+                    month_name = calendar.month_name[cal_date.month]
+                    today      = date.today()
+
+                    PRIO_DOT = {"high": "#c1440e", "medium": "#a05c00", "low": "#1a6b55"}
+
+                    # ── Styles embedded in the HTML ──
+                    # Priority ring color: use highest priority event on that date
+                    PRIO_DOT  = {"high": "#c1440e", "medium": "#a05c00", "low": "#1a6b55"}
+                    PRIO_RANK = {"high": 0, "medium": 1, "low": 2}
+
+                    cal_html = f"""
+<style>
+.cal-wrap {{
+    background: #faf8f4;
+    border: 1px solid #d6cfc4;
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin: 8px auto 0;
+    font-family: 'Space Grotesk', sans-serif;
+    max-width: 420px;
+    width: 100%;
+}}
+.cal-header {{
+    text-align: center;
+    margin-bottom: 8px;
+}}
+.cal-month {{
+    font-size: 0.82em;
+    font-weight: 700;
+    color: #1a1008;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}}
+.cal-grid {{
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+    text-align: center;
+}}
+.cal-dow {{
+    font-size: 0.65em;
+    font-weight: 600;
+    color: #a08070;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding-bottom: 4px;
+}}
+.cal-day {{
+    position: relative;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    cursor: default;
+}}
+.cal-day-num {{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    font-size: 0.78em;
+    font-weight: 500;
+    color: #a08070;
+}}
+.cal-day.has-events .cal-day-num {{
+    font-weight: 800;
+    color: #1a1008;
+    border: 2px solid #d6cfc4;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}}
+.cal-day.has-events:hover .cal-day-num {{
+    border-color: var(--ring-color, #c1440e);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring-color, #c1440e) 15%, transparent);
+    color: var(--ring-color, #c1440e);
+}}
+.cal-day.is-today .cal-day-num {{
+    background: #c1440e;
+    color: #fff;
+    font-weight: 800;
+    border: none;
+    box-shadow: 0 2px 6px rgba(193,68,14,0.3);
+}}
+/* Hover tooltip */
+.cal-tooltip {{
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1a1008;
+    color: #f0ece3;
+    border-radius: 8px;
+    padding: 7px 10px;
+    width: max-content;
+    max-width: 190px;
+    font-size: 0.68em;
+    line-height: 1.5;
+    z-index: 100;
+    white-space: normal;
+    box-shadow: 0 4px 16px rgba(26,16,8,0.28);
+    pointer-events: none;
+}}
+.cal-tooltip::after {{
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #1a1008;
+}}
+.cal-day.has-events:hover .cal-tooltip {{
+    display: block;
+}}
+.cal-section-label {{
+    font-size: 0.6em;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #9b3a10;
+    margin-bottom: 8px;
+}}
+</style>
+
+<div class="cal-wrap">
+  <div class="cal-section-label">Deadlines Timeline</div>
+  <div class="cal-header">
+    <div class="cal-month">{month_name} {cal_date.year}</div>
+  </div>
+  <div class="cal-grid">
+"""
+                    for dow in ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]:
+                        cal_html += f'<div class="cal-dow">{dow}</div>\n'
+
+                    for week in month_days:
+                        for day in week:
+                            if day == 0:
+                                cal_html += '<div></div>\n'
+                                continue
+
+                            current_d  = date(cal_date.year, cal_date.month, day)
+                            day_events = events_by_date.get(current_d, [])
+                            has_ev     = len(day_events) > 0
+                            is_today   = (current_d == today)
+
+                            # Pick highest priority ring color for this date
+                            if has_ev:
+                                top_ev    = min(day_events, key=lambda e: PRIO_RANK.get(e.get("prio","medium"), 1))
+                                ring_clr  = PRIO_DOT.get(top_ev.get("prio","medium"), "#a05c00")
+                            else:
+                                ring_clr  = "#c1440e"
+
+                            classes = "cal-day"
+                            if is_today:  classes += " is-today"
+                            elif has_ev:  classes += " has-events"
+
+                            style = f'style="--ring-color:{ring_clr}"' if has_ev else ""
+                            cal_html += f'<div class="{classes}" {style}>\n'
+                            cal_html += f'  <div class="cal-day-num">{day}</div>\n'
+
+                            if has_ev:
+                                # Tooltip
+                                tooltip_lines = ""
+                                for ev in day_events:
+                                    rc = PRIO_DOT.get(ev.get("prio","medium"), "#a05c00")
+                                    tooltip_lines += (
+                                        f'<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;">'
+                                        f'<div style="width:6px;height:6px;border-radius:50%;border:1.5px solid {rc};flex-shrink:0;margin-top:4px"></div>'
+                                        f'<div><div style="font-weight:700;color:#f0ece3;font-size:1em">{ev["title"]}</div>'
+                                        f'<div style="color:#c8b8ac;font-size:0.88em">👤 {ev["owner"]}</div></div>'
+                                        f'</div>'
+                                    )
+                                cal_html += f'  <div class="cal-tooltip">{tooltip_lines}</div>\n'
+
+                            cal_html += '</div>\n'
+
+                    cal_html += "  </div>\n</div>"
+                    st.markdown(cal_html, unsafe_allow_html=True)
+
+def _render_items(action_items: list) -> list:
+    if not action_items:
+        return []
+
+    roster = (st.session_state.get("graph_state") or {}).get("participant_roster", [])
+    owners = [p.get("name", "") for p in roster] if roster else []
+
+    st.subheader(f"Action Items ({len(action_items)})")
+
+    edited = []
+    for i, item in enumerate(action_items):
+        conf       = item.get("confidence", 0)
+        status_val = _norm(item.get("status", "pending"), "pending")
+        raw_prio   = _norm(item.get("priority", "medium"), "medium").lower()
+        if raw_prio not in ["high", "medium", "low"]:
+            raw_prio = "medium"
+        owner_name  = (item.get("resolved_owner") or {}).get("name") or item.get("raw_owner", "—")
+        date_disp   = str(item.get("resolved_date") or item.get("raw_due_date") or "Not set")
+        description = item.get("description", "")
+        evidence    = item.get("evidence_quote", "")
+        ev_ts       = item.get("evidence_timestamp", "")
+        title       = item.get("title", "Untitled")
+
+        with st.container(border=True):
+            st.markdown(f"### {title}")
+            st.caption(f"👤 {owner_name} | 📅 {date_disp} | 🎯 Priority: {raw_prio.upper()} | 📌 Status: {status_val.upper()}")
+            
+            if description:
+                st.write(description)
+                
+            st.progress(conf, text=f"{int(conf*100)}% confidence")
+
+        # ── Native edit controls (must be Streamlit widgets) ─────
+        c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
+        with c1:
+            if owners:
+                idx = owners.index(owner_name) if owner_name in owners else 0
+                sel_owner = st.selectbox(
+                    "Owner", owners, index=idx, key=f"owner_{i}", label_visibility="collapsed"
+                )
+            else:
+                sel_owner = st.text_input(
+                    "Owner", value=owner_name, key=f"owner_{i}", label_visibility="collapsed"
+                )
+        with c2:
+            raw_date = item.get("resolved_date")
+            dflt = date.today()
+            if raw_date:
+                try: dflt = date.fromisoformat(str(raw_date))
+                except: pass
+            sel_date = st.date_input("Due", value=dflt, key=f"date_{i}", label_visibility="collapsed")
+        with c3:
+            sel_prio = st.selectbox(
+                "Prio", ["high", "medium", "low"],
+                index=["high", "medium", "low"].index(raw_prio),
+                key=f"prio_{i}", label_visibility="collapsed",
+            )
+        with c4:
+            sel_status = st.selectbox(
+                "Status", ["pending", "approved", "rejected"],
+                index=["pending", "approved", "rejected"].index(status_val),
+                key=f"status_{i}", label_visibility="collapsed",
+            )
+
+        # Transcript evidence (collapsible)
+        if evidence:
+            with st.expander("📜 Transcript evidence"):
+                st.markdown(f'> *"{evidence}"*')
+                if ev_ts:
+                    st.caption(f"@ {ev_ts}")
+
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+        updated = dict(item)
+        updated.update({
+            "status": sel_status, "priority": sel_prio,
+            "resolved_date": sel_date.isoformat(),
+        })
+        if updated.get("resolved_owner"):
+            updated["resolved_owner"]["name"] = sel_owner
+            for p in roster:
+                if p.get("name") == sel_owner:
+                    updated["resolved_owner"].update({
+                        "email": p.get("email", ""),
+                        "github_username": p.get("github_username"),
+                    })
+                    break
+        else:
+            updated["resolved_owner"] = {
+                "name": sel_owner, "email": "", "github_username": None,
+                "match_score": 1.0, "resolution_method": "manual",
+            }
+        edited.append(updated)
+    return edited
+
+def _execute(approved: list, rejected: list):
+    config = {"configurable": {"thread_id": st.session_state.get("thread_id")}}
+    with st.spinner(f"Creating {len(approved)} GitHub Issue(s)…"):
         try:
-            # Resume graph from interrupt with human decisions
-            final_state = graph.invoke(
+            final = get_graph().invoke(
                 Command(resume={"approved": approved, "rejected": rejected}),
                 config=config,
             )
-            st.session_state.result = final_state
-            created = final_state.get("created_issues", [])
-            skipped = final_state.get("skipped_duplicates", [])
-
-            st.success(f"✅ Done! Created {len(created)} issues, skipped {len(skipped)} duplicates.")
-
-            if created:
-                st.markdown("**Created Issues:**")
-                for issue in created:
-                    st.markdown(f"- [{issue.get('title')}]({issue.get('issue_url')})")
-
+            st.session_state.result = final
+            created = final.get("created_issues", [])
+            skipped = final.get("skipped_duplicates", [])
+            st.success(f" Done! {len(created)} issues created · {len(skipped)} duplicates skipped")
+            st.session_state.pipeline_step = 5
+            time.sleep(1.5)
+            st.rerun()
         except Exception as e:
-            st.error(f"Execution failed: {str(e)}")
+            st.error(f"❌ {e}")
             st.exception(e)
 
-
-# ─────────────────────────────────────────────
-# PAGE 3: Audit Log
-# ─────────────────────────────────────────────
-
-def page_audit():
-    st.markdown("# 📋 Audit Log")
-    st.markdown("Every action the agent has taken — immutable, queryable, full context.")
-
+def _render_audit_log():
     init_db()
+    with st.container(border=True):
+        fc1, fc2, fc3 = st.columns([2, 2, 1])
+        with fc1:
+            mf = st.text_input("Filter by Meeting ID", placeholder="Leave blank for all")
+        with fc2:
+            ef = st.selectbox(
+                "Filter by Event",
+                ["", "github_issue_created", "skipped_duplicate", "item_rejected",
+                 "decision_recorded", "risk_identified", "open_question"],
+                format_func=lambda x: x or "All events",
+            )
+        with fc3:
+            lim = st.number_input("Max rows", 10, 2000, 200, 50)
 
-    # Filters
-    f_col1, f_col2, f_col3 = st.columns(3)
-    with f_col1:
-        meeting_filter = st.text_input("Filter by Meeting ID", placeholder="Leave blank for all")
-    with f_col2:
-        event_filter = st.selectbox(
-            "Filter by Event",
-            options=["", "github_issue_created", "skipped_duplicate", "item_rejected"],
-            format_func=lambda x: x or "All events",
-        )
-    with f_col3:
-        limit = st.number_input("Max rows", min_value=10, max_value=1000, value=100, step=10)
-
-    entries = get_all_entries(
-        meeting_id   = meeting_filter or None,
-        event_filter = event_filter or None,
-        limit        = limit,
-    )
+    entries = get_all_entries(meeting_id=mf or None, event_filter=ef or None, limit=lim)
 
     if not entries:
-        st.info("No audit entries found. Process a meeting to see the log here.")
+        st.info("No audit logs yet.")
         return
 
-    # Summary metrics
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Events", len(entries))
-    m2.metric("Issues Created", sum(1 for e in entries if e.get("event") == "github_issue_created"))
-    m3.metric("Duplicates Skipped", sum(1 for e in entries if e.get("event") == "skipped_duplicate"))
-    m4.metric("Items Rejected", sum(1 for e in entries if e.get("event") == "item_rejected"))
+    mc = st.columns(5)
+    mc[0].metric("Total Logs", len(entries))
+    mc[1].metric("Issues",     sum(1 for e in entries if e.get("event") == "github_issue_created"))
+    mc[2].metric("Decisions",  sum(1 for e in entries if e.get("event") == "decision_recorded"))
+    mc[3].metric("Risks",      sum(1 for e in entries if e.get("event") == "risk_identified"))
+    mc[4].metric("Questions",  sum(1 for e in entries if e.get("event") == "open_question"))
 
-    st.divider()
-
-    # Table
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
     df = pd.DataFrame(entries)
-    display_cols = ["timestamp", "event", "meeting_id", "title", "owner_email", "external_ref", "approved_by"]
-    display_cols = [c for c in display_cols if c in df.columns]
-
+    cols = [c for c in ["timestamp", "event", "title", "owner_email", "external_ref", "approved_by"] if c in df.columns]
+    
     st.dataframe(
-        df[display_cols],
+        df[cols],
         use_container_width=True,
         hide_index=True,
         column_config={
-            "external_ref": st.column_config.LinkColumn("GitHub Issue"),
-            "timestamp":    st.column_config.DatetimeColumn("Time", format="YYYY-MM-DD HH:mm:ss"),
-        }
+            "external_ref": st.column_config.LinkColumn("Link"),
+            "timestamp":    st.column_config.DatetimeColumn("Time", format="YYYY-MM-DD HH:mm"),
+            "event":        st.column_config.TextColumn("Event"),
+            "title":        st.column_config.TextColumn("Title", width="large"),
+        },
     )
 
-    # Raw JSON download
     st.download_button(
-        "⬇️ Download as JSON",
-        data=json.dumps(entries, indent=2, default=str),
-        file_name="meetingmind_audit_log.json",
+        "Download JSON Audit Log",
+        data=json.dumps(entries, indent=2, default=str).encode("utf-8"),
+        file_name=f"meetingmind_audit_{date.today()}.json",
         mime="application/json",
     )
 
 
-# ─────────────────────────────────────────────
-# Router
-# ─────────────────────────────────────────────
+if __name__ == "__main__":
+    main()
 
-page = st.session_state.page
 
-if page == "upload":
-    page_upload()
-elif page == "review":
-    page_review()
-elif page == "audit":
-    page_audit()

@@ -164,7 +164,7 @@ def _call_groq(prompt: str, client: Groq) -> dict:
         ],
         response_format={"type": "json_object"},
         temperature=0.1,       # low temp for deterministic structured output
-        max_tokens=4096,
+        max_tokens=8192,
     )
     return json.loads(response.choices[0].message.content)
 

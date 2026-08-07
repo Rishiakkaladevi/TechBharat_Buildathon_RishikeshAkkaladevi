@@ -259,3 +259,27 @@ def log_item_rejected(
     )
     log_entry(entry)
     return entry
+
+
+def log_meeting_event(
+    meeting_id: str,
+    event: str,
+    title: str,
+    approved_by: str = "system",
+    payload: Optional[dict] = None,
+) -> AuditEntry:
+    """
+    Log a meeting-level event: decision_recorded, risk_identified, open_question.
+    These appear in the Audit page alongside action item events.
+    """
+    entry = AuditEntry(
+        timestamp   = datetime.utcnow(),
+        event       = event,
+        meeting_id  = meeting_id,
+        title       = title,
+        approved_by = approved_by,
+        payload     = payload,
+    )
+    log_entry(entry)
+    return entry
+

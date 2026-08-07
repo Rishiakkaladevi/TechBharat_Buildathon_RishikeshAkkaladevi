@@ -18,6 +18,7 @@ from typing import Any
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import interrupt, Command
+import sqlite3
 
 from core.ingestion   import ingest_node
 from core.extraction  import extract_node
@@ -86,18 +87,7 @@ def dedup_check_node(state: dict) -> dict:
         dedup_key = item_dict.get("dedup_key")
         title     = item_dict.get("title", "")
 
-        # Check audit log (primary dedup — fast, no API call)
-        if dedup_key and is_duplicate(dedup_key):
-            skipped_duds.append(item_dict.get("id"))
-            log_skipped_duplicate(
-                meeting_id = meeting_id,
-                item_id    = item_dict.get("id", ""),
-                title      = title,
-                dedup_key  = dedup_key,
-            )
-            continue
-
-        # Check each connector's task_exists() (secondary safety net)
+        # Check each connector's task_exists() (uses active issues in GitHub)
         existing_url = None
         try:
             item_obj = ActionItem(**item_dict)
@@ -229,10 +219,22 @@ def execute_tools_node(state: dict) -> dict:
             errors.append(f"Execution error: {str(e)}")
 
     # Run post_recap on all connectors (e.g. Slack sends recap)
+    # Pass meeting_record so Slack can include summary/decisions/risks
     slack_posted = False
+    meeting_record = state.get("meeting_record_raw") or {}
+    if hasattr(meeting_record, "model_dump"):
+        meeting_record = meeting_record.model_dump()
+    elif not isinstance(meeting_record, dict):
+        meeting_record = {}
+
     for connector in connectors:
         try:
-            posted = connector.post_recap(created_issues, meeting_date)
+            import inspect
+            sig = inspect.signature(connector.post_recap)
+            if "meeting_record" in sig.parameters:
+                posted = connector.post_recap(created_issues, meeting_date, meeting_record=meeting_record)
+            else:
+                posted = connector.post_recap(created_issues, meeting_date)
             if posted:
                 slack_posted = True
         except Exception as e:
@@ -253,13 +255,41 @@ def execute_tools_node(state: dict) -> dict:
 def audit_log_node(state: dict) -> dict:
     """
     LangGraph node: audit_log.
-    Final node — state is already fully logged inside execute_tools_node.
-    This node exists to make the audit step explicit in the graph
-    and to store the final summary state.
+    Logs the meeting-level summary events (decisions, risks, open questions)
+    to the audit log so they appear in the Audit page.
     """
-    # Audit entries were already written inside execute_tools_node per-item.
-    # Here we just ensure the DB is initialized and return state unchanged.
+    from storage.audit_log import log_meeting_event
     init_db()
+
+    meeting_record = state.get("meeting_record_raw") or {}
+    if hasattr(meeting_record, "model_dump"):
+        meeting_record = meeting_record.model_dump()
+    elif not isinstance(meeting_record, dict):
+        meeting_record = {}
+
+    meeting_id  = state.get("_meeting_id", "unknown")
+    meeting_date = state.get("meeting_date", "")
+    approved_by  = state.get("approved_by", "user")
+
+    # Log decisions
+    for d in meeting_record.get("decisions", []):
+        text = d.get("decision", str(d)) if isinstance(d, dict) else str(d)
+        log_meeting_event(meeting_id=meeting_id, event="decision_recorded",
+                          title=text[:200], approved_by=approved_by,
+                          payload={"decision": d, "meeting_date": meeting_date})
+
+    # Log risks
+    for r in meeting_record.get("risks", []):
+        log_meeting_event(meeting_id=meeting_id, event="risk_identified",
+                          title=str(r)[:200], approved_by=approved_by,
+                          payload={"risk": r, "meeting_date": meeting_date})
+
+    # Log open questions
+    for q in meeting_record.get("open_questions", []):
+        log_meeting_event(meeting_id=meeting_id, event="open_question",
+                          title=str(q)[:200], approved_by=approved_by,
+                          payload={"question": q, "meeting_date": meeting_date})
+
     return state
 
 
@@ -319,22 +349,28 @@ def build_graph():
     builder.add_edge("audit_log",     END)
 
     # Compile with SQLite checkpointer for state persistence
-    db_path      = os.getenv("MEETING_DB_PATH", "data/audit.db")
-    checkpointer = SqliteSaver.from_conn_string(db_path)
+    db_path = os.getenv("MEETING_DB_PATH", "data/audit.db")
+    os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
+
+    # SqliteSaver requires a raw sqlite3 connection (from_conn_string returns a
+    # context manager in newer versions of langgraph-checkpoint-sqlite)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    checkpointer = SqliteSaver(conn)
 
     graph = builder.compile(
         checkpointer     = checkpointer,
-        interrupt_before = ["human_review"],  # pause before human review node
+        interrupt_before = ["human_review"],
     )
 
-    return graph
+    return graph, conn   # return conn so caller can keep it alive
 
 
-# Singleton graph instance
+# Singleton graph + connection (connection must stay alive for checkpointer)
 _graph = None
+_conn  = None
 
 def get_graph():
-    global _graph
+    global _graph, _conn
     if _graph is None:
-        _graph = build_graph()
+        _graph, _conn = build_graph()
     return _graph
